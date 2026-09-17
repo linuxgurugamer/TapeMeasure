@@ -119,8 +119,10 @@ namespace TapeMeasure
 
             HandleKeyboardShortcuts();
 
-            if (_measurementCursorVisible && Cursor.visible)
-                Cursor.visible = false;
+            // Cursor visibility depends on both measurement mode and whether
+            // the pointer is over one of TapeMeasure's own windows. Re-evaluate
+            // every frame so the normal cursor comes back immediately over UI.
+            UpdateMeasurementCursor();
 
             if (_endpointEditMode)
             {
@@ -199,6 +201,9 @@ namespace TapeMeasure
         {
             GUILayout.BeginVertical();
             DrawMeasurementControls();
+
+            GUILayout.Space(6f);
+            DrawSnappingPanel();
 
             GUILayout.Space(6f);
             DrawDimensionsPanel();
@@ -300,41 +305,7 @@ namespace TapeMeasure
             GUILayout.Label("Measurement behavior", _statusStyle);
 
             GUILayout.Label("Snapping", _statusStyle);
-
-            bool snapping = GUILayout.Toggle(_settings.SnappingEnabled,
-                "Enable snapping (Shift temporarily enables the configured targets)");
-            if (snapping != _settings.SnappingEnabled)
-            {
-                _settings.SnappingEnabled = snapping;
-                changed = true;
-                SetStatus(snapping ? "Snapping enabled." : "Snapping disabled. Hold Shift for temporary snapping.", 4f);
-            }
-
-            GUILayout.Label("Snap targets (nearest enabled target within the snap radius wins):");
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapPartOrigin, "Part origin", GUILayout.Width(245f));
-            changed |= DrawToggle(ref _settings.SnapAttachmentNodes, "Attachment node", GUILayout.Width(245f));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapSurfaceAttachmentPoint, "Surface attachment point", GUILayout.Width(245f));
-            changed |= DrawToggle(ref _settings.SnapPartCenter, "Part center", GUILayout.Width(245f));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapVesselRoot, "Vessel root", GUILayout.Width(245f));
-            changed |= DrawToggle(ref _settings.SnapCenterOfMass, "Center of Mass", GUILayout.Width(245f));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapCenterOfLift, "Center of Lift", GUILayout.Width(245f));
-            changed |= DrawToggle(ref _settings.SnapCenterOfThrust, "Center of Thrust", GUILayout.Width(245f));
-            GUILayout.EndHorizontal();
-            changed |= DrawToggle(ref _settings.SnapVesselAxisGrid, "Vessel Axis / Grid snapping");
-
-            changed |= DrawSlider("Snap radius", ref _settings.SnapPixelRadius, 8f, 100f, "F0", " px");
-            if (_settings.SnapVesselAxisGrid)
-            {
-                changed |= DrawSlider("Grid spacing", ref _settings.VesselGridSize, 0.01f, 2f, "F2", " m");
-                GUILayout.Label("Axis snapping uses the vessel X/Y/Z axes through the previous endpoint; grid snapping uses vessel-local coordinates.");
-            }
+            changed |= DrawSnappingOptions();
 
             bool sym = GUILayout.Toggle(_settings.SymmetryAwareMeasurements,
                 "Create symmetry counterpart measurements");
@@ -374,6 +345,15 @@ namespace TapeMeasure
                 _worldLabelStyle = null;
                 _valueButtonStyle = null;
                 _deleteButtonStyle = null;
+            }
+
+            bool snappingPane = GUILayout.Toggle(_settings.ShowSnappingPane,
+                "Expand snapping pane");
+            if (snappingPane != _settings.ShowSnappingPane)
+            {
+                _settings.ShowSnappingPane = snappingPane;
+                RequestMainWindowResize();
+                changed = true;
             }
 
             bool dimensionsPane = GUILayout.Toggle(_settings.ShowVesselDimensionsPane,
@@ -560,6 +540,66 @@ namespace TapeMeasure
             // height after a pane is collapsed. Resetting height allows the
             // next layout pass to fit the currently visible content.
             _windowRect.height = 0f;
+        }
+
+        private void DrawSnappingPanel()
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            if (!DrawPaneHeader("Snapping", ref _settings.ShowSnappingPane,
+                _settings.SnappingEnabled ? "On" : "Off"))
+            {
+                GUILayout.EndVertical();
+                return;
+            }
+
+            bool changed = DrawSnappingOptions();
+            if (changed)
+                MarkSettingsDirty();
+
+            GUILayout.EndVertical();
+        }
+
+        private bool DrawSnappingOptions()
+        {
+            bool changed = false;
+
+            bool snapping = GUILayout.Toggle(_settings.SnappingEnabled,
+                "Enable snapping (Shift temporarily enables the configured targets)");
+            if (snapping != _settings.SnappingEnabled)
+            {
+                _settings.SnappingEnabled = snapping;
+                changed = true;
+                SetStatus(snapping ? "Snapping enabled." :
+                    "Snapping disabled. Hold Shift for temporary snapping.", 4f);
+            }
+
+            GUILayout.Label("Snap targets (nearest enabled target within the snap radius wins):");
+            GUILayout.BeginHorizontal();
+            changed |= DrawToggle(ref _settings.SnapPartOrigin, "Part origin", GUILayout.Width(260f));
+            changed |= DrawToggle(ref _settings.SnapAttachmentNodes, "Attachment node", GUILayout.Width(260f));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            changed |= DrawToggle(ref _settings.SnapSurfaceAttachmentPoint, "Surface attachment point", GUILayout.Width(260f));
+            changed |= DrawToggle(ref _settings.SnapPartCenter, "Part center", GUILayout.Width(260f));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            changed |= DrawToggle(ref _settings.SnapVesselRoot, "Vessel root", GUILayout.Width(260f));
+            changed |= DrawToggle(ref _settings.SnapCenterOfMass, "Center of Mass", GUILayout.Width(260f));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            changed |= DrawToggle(ref _settings.SnapCenterOfLift, "Center of Lift", GUILayout.Width(260f));
+            changed |= DrawToggle(ref _settings.SnapCenterOfThrust, "Center of Thrust", GUILayout.Width(260f));
+            GUILayout.EndHorizontal();
+            changed |= DrawToggle(ref _settings.SnapVesselAxisGrid, "Vessel Axis / Grid snapping");
+
+            changed |= DrawSlider("Snap radius", ref _settings.SnapPixelRadius, 8f, 100f, "F0", " px");
+            if (_settings.SnapVesselAxisGrid)
+            {
+                changed |= DrawSlider("Grid spacing", ref _settings.VesselGridSize, 0.01f, 2f, "F2", " m");
+                GUILayout.Label("Axis snapping uses the vessel X/Y/Z axes through the previous endpoint; grid snapping uses vessel-local coordinates.");
+            }
+
+            return changed;
         }
 
         private void DrawDimensionsPanel()
@@ -1174,11 +1214,18 @@ namespace TapeMeasure
             ShipConstruct ship = EditorLogic.fetch.ship;
             bool hasRawWorldPoint = false;
 
-            RaycastHit[] hits = Physics.RaycastAll(
-                camera.ScreenPointToRay(Input.mousePosition),
-                10000f);
+            Ray ray = camera.ScreenPointToRay(Input.mousePosition);
+            RaycastHit[] hits = Physics.RaycastAll(ray, 10000f);
 
-            float nearestDistance = float.MaxValue;
+            // KSP Part colliders are often intentionally inset from the visible
+            // model. Use collider hits only to identify candidate vessel Parts,
+            // then intersect the actual visible render mesh so the measurement
+            // point lands on the skin rather than a recessed/internal collider.
+            HashSet<Part> candidateParts = new HashSet<Part>();
+            Part fallbackPart = null;
+            Vector3 fallbackPoint = Vector3.zero;
+            float fallbackDistance = float.MaxValue;
+
             for (int i = 0; i < hits.Length; ++i)
             {
                 RaycastHit hit = hits[i];
@@ -1187,13 +1234,39 @@ namespace TapeMeasure
                 Part part = hit.collider.GetComponentInParent<Part>();
                 if (part == null || !ship.parts.Contains(part)) continue;
 
-                if (hit.distance < nearestDistance)
+                candidateParts.Add(part);
+                if (hit.distance < fallbackDistance)
                 {
-                    nearestDistance = hit.distance;
+                    fallbackDistance = hit.distance;
+                    fallbackPart = part;
+                    fallbackPoint = hit.point;
+                }
+            }
+
+            float nearestVisualDistance = float.MaxValue;
+            foreach (Part part in candidateParts)
+            {
+                Vector3 visualPoint;
+                float visualDistance;
+                if (!TryGetVisiblePartSurfacePoint(part, ray, out visualPoint, out visualDistance))
+                    continue;
+
+                if (visualDistance < nearestVisualDistance)
+                {
+                    nearestVisualDistance = visualDistance;
                     nearestPart = part;
-                    selectedPoint = hit.point;
+                    selectedPoint = visualPoint;
                     hasRawWorldPoint = true;
                 }
+            }
+
+            // Some mod parts do not expose a readable MeshFilter at runtime.
+            // Preserve the previous collider behavior as a compatibility fallback.
+            if (!hasRawWorldPoint && fallbackPart != null)
+            {
+                nearestPart = fallbackPart;
+                selectedPoint = fallbackPoint;
+                hasRawWorldPoint = true;
             }
 
             bool snappingActive = _settings != null &&
@@ -1230,6 +1303,156 @@ namespace TapeMeasure
             }
 
             return hasRawWorldPoint && nearestPart != null;
+        }
+
+        private static bool TryGetVisiblePartSurfacePoint(
+            Part part,
+            Ray worldRay,
+            out Vector3 worldPoint,
+            out float worldDistance)
+        {
+            worldPoint = Vector3.zero;
+            worldDistance = float.MaxValue;
+            if (part == null || part.gameObject == null)
+                return false;
+
+            bool found = false;
+            MeshFilter[] filters = part.GetComponentsInChildren<MeshFilter>(true);
+            for (int i = 0; i < filters.Length; ++i)
+            {
+                MeshFilter filter = filters[i];
+                if (filter == null || filter.sharedMesh == null || !filter.gameObject.activeInHierarchy)
+                    continue;
+
+                // Attached Parts may be transform children of other Parts. Only
+                // test meshes whose nearest owning Part is the candidate Part.
+                if (filter.GetComponentInParent<Part>() != part)
+                    continue;
+
+                Renderer renderer = filter.GetComponent<Renderer>();
+                if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+                    continue;
+
+                float boundsDistance;
+                if (!renderer.bounds.IntersectRay(worldRay, out boundsDistance))
+                    continue;
+
+                Vector3 hitPoint;
+                float hitDistance;
+                if (!TryIntersectMesh(filter.sharedMesh, filter.transform, worldRay, out hitPoint, out hitDistance))
+                    continue;
+
+                if (hitDistance < worldDistance)
+                {
+                    worldDistance = hitDistance;
+                    worldPoint = hitPoint;
+                    found = true;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryIntersectMesh(
+            Mesh mesh,
+            Transform meshTransform,
+            Ray worldRay,
+            out Vector3 worldPoint,
+            out float worldDistance)
+        {
+            worldPoint = Vector3.zero;
+            worldDistance = float.MaxValue;
+            if (mesh == null || meshTransform == null)
+                return false;
+
+            try
+            {
+                Vector3[] vertices = mesh.vertices;
+                int[] triangles = mesh.triangles;
+                if (vertices == null || triangles == null || triangles.Length < 3)
+                    return false;
+
+                Matrix4x4 worldToLocal = meshTransform.worldToLocalMatrix;
+                Vector3 localOrigin = worldToLocal.MultiplyPoint3x4(worldRay.origin);
+                Vector3 localDirection = worldToLocal.MultiplyVector(worldRay.direction);
+
+                bool found = false;
+                float bestT = float.MaxValue;
+                for (int i = 0; i + 2 < triangles.Length; i += 3)
+                {
+                    int i0 = triangles[i];
+                    int i1 = triangles[i + 1];
+                    int i2 = triangles[i + 2];
+                    if (i0 < 0 || i0 >= vertices.Length ||
+                        i1 < 0 || i1 >= vertices.Length ||
+                        i2 < 0 || i2 >= vertices.Length)
+                        continue;
+
+                    float t;
+                    if (!RayIntersectsTriangle(
+                        localOrigin,
+                        localDirection,
+                        vertices[i0],
+                        vertices[i1],
+                        vertices[i2],
+                        out t))
+                        continue;
+
+                    if (t >= 0f && t < bestT)
+                    {
+                        bestT = t;
+                        found = true;
+                    }
+                }
+
+                if (!found)
+                    return false;
+
+                // The local ray was produced by applying the same affine matrix
+                // to origin and direction, so its t parameter is the world-ray t.
+                worldPoint = worldRay.origin + worldRay.direction * bestT;
+                worldDistance = Vector3.Distance(worldRay.origin, worldPoint);
+                return true;
+            }
+            catch
+            {
+                // A few mod meshes are not readable. Let the caller use the
+                // collider fallback rather than making those Parts unmeasurable.
+                return false;
+            }
+        }
+
+        private static bool RayIntersectsTriangle(
+            Vector3 origin,
+            Vector3 direction,
+            Vector3 v0,
+            Vector3 v1,
+            Vector3 v2,
+            out float t)
+        {
+            t = 0f;
+            const float epsilon = 0.000001f;
+
+            Vector3 edge1 = v1 - v0;
+            Vector3 edge2 = v2 - v0;
+            Vector3 p = Vector3.Cross(direction, edge2);
+            float determinant = Vector3.Dot(edge1, p);
+            if (Mathf.Abs(determinant) < epsilon)
+                return false;
+
+            float inverse = 1f / determinant;
+            Vector3 s = origin - v0;
+            float u = Vector3.Dot(s, p) * inverse;
+            if (u < 0f || u > 1f)
+                return false;
+
+            Vector3 q = Vector3.Cross(s, edge1);
+            float v = Vector3.Dot(direction, q) * inverse;
+            if (v < 0f || u + v > 1f)
+                return false;
+
+            t = Vector3.Dot(edge2, q) * inverse;
+            return t >= 0f;
         }
 
         private void TryGetSnapAxisAnchor(out bool hasAnchor, out Vector3 anchor)
@@ -2182,19 +2405,37 @@ namespace TapeMeasure
 
         private void UpdateMeasurementCursor()
         {
-            bool shouldShow = _measurementMode && _measurementCursorTexture != null;
+            bool overTapeMeasureWindow = IsPointerOverTapeMeasureWindow();
+            bool shouldShow = _measurementMode &&
+                _measurementCursorTexture != null &&
+                !overTapeMeasureWindow;
+
             _measurementCursorVisible = shouldShow;
 
-            // Hide only the normal OS/KSP pointer. The replacement image is
-            // drawn in OnGUI at the exact mouse position, so KSP can change its
-            // internal cursor state without producing a visible frame-to-frame
-            // fight between two cursor systems.
+            // Use the normal pointer over TapeMeasure UI so buttons, text fields
+            // and pane headers behave like ordinary editor controls. Outside the
+            // windows, hide it and draw the measurement cursor overlay instead.
             Cursor.visible = !shouldShow;
+        }
+
+        private bool IsPointerOverTapeMeasureWindow()
+        {
+            Vector2 guiMouse = new Vector2(
+                Input.mousePosition.x,
+                Screen.height - Input.mousePosition.y);
+
+            if (_windowVisible && _windowRect.Contains(guiMouse))
+                return true;
+
+            return _windowVisible && _showSettings &&
+                _settingsWindowRect.Contains(guiMouse);
         }
 
         private void DrawMeasurementCursor()
         {
-            if (!_measurementCursorVisible || _measurementCursorTexture == null)
+            if (!_measurementCursorVisible ||
+                _measurementCursorTexture == null ||
+                IsPointerOverTapeMeasureWindow())
                 return;
 
             Vector2 mouse = Event.current != null

@@ -31,7 +31,7 @@
 1:TapeMeasure, TapeMeasure.version
 
 # 2:PROJNAME, PROJFILE, VERSIONFILE, PLUGINSFOLDER
-2:TapeMeasure,TapeMeasure/TapeMeasure.csproj,TapeMeasure.version,GameData/TapeMeasure/Plugins
+2:TapeMeasure,Source/TapeMeasure.csproj,TapeMeasure.version,GameData/TapeMeasure/Plugins
 
 # 3:SOURCEFILE, DESTDIR
 3:TapeMeasure.version,GameData/TapeMeasure

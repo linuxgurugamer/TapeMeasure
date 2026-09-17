@@ -60,6 +60,7 @@ namespace TapeMeasure
         // they represent each pane's expanded/collapsed state. The pane header
         // remains visible even when the content is collapsed.
         public bool UseAlternateSkin = false;
+        public bool ShowSnappingPane = false;
         public bool ShowVesselDimensionsPane = true;
         public bool ShowMeasurementListPane = true;
         public bool SelectedMeasurementPaneExpanded = true;
@@ -145,6 +146,7 @@ namespace TapeMeasure
                 node.AddValue("defaultLockMode", DefaultLockMode.ToString());
                 node.AddValue("distanceUnits", DistanceUnits.ToString());
                 node.AddValue("useAlternateSkin", UseAlternateSkin);
+                node.AddValue("showSnappingPane", ShowSnappingPane);
                 node.AddValue("showVesselDimensionsPane", ShowVesselDimensionsPane);
                 node.AddValue("showMeasurementListPane", ShowMeasurementListPane);
                 node.AddValue("selectedMeasurementPaneExpanded", SelectedMeasurementPaneExpanded);
@@ -211,6 +213,7 @@ namespace TapeMeasure
 
                 SymmetryAwareMeasurements = GetBool(node, "symmetryAwareMeasurements", SymmetryAwareMeasurements);
                 UseAlternateSkin = GetBool(node, "useAlternateSkin", UseAlternateSkin);
+                ShowSnappingPane = GetBool(node, "showSnappingPane", ShowSnappingPane);
                 ShowVesselDimensionsPane = GetBool(node, "showVesselDimensionsPane", ShowVesselDimensionsPane);
                 ShowMeasurementListPane = GetBool(node, "showMeasurementListPane", ShowMeasurementListPane);
                 SelectedMeasurementPaneExpanded = GetBool(node, "selectedMeasurementPaneExpanded", SelectedMeasurementPaneExpanded);

@@ -39,6 +39,7 @@ The main window also includes a **Show measurement labels in the editor view** t
 
 The main window contains collapsible sections for:
 
+- Snapping
 - Automatic vessel dimensions
 - Measurement list
 - Selected measurement
@@ -53,7 +54,7 @@ Click a section heading to expand or collapse it. The window resizes to fit the 
 4. Click the second point.
 5. The completed measurement is added to the Measurement List.
 
-TapeMeasure shows the straight-line distance and the vessel-axis X, Y, and Z components.
+TapeMeasure shows the straight-line distance and the vessel-axis X, Y, and Z components. Free surface points are resolved against the visible Part mesh when possible, preventing recessed/internal colliders from pulling points below the visible skin.
 
 Creating a measurement does not automatically select it. Click its row in the Measurement List when you want to highlight it or edit its details.
 
@@ -92,6 +93,8 @@ The Automatic Vessel Dimensions pane shows the visible vessel envelope using act
 Dimensions refresh automatically when KSP reports that the editor ship has been modified. The pane can be collapsed from its heading or from Settings.
 
 ## Snapping
+
+The main window has a collapsible **Snapping** pane containing the master snapping switch, all individual snap targets, snap radius, and vessel grid spacing. The same controls remain available in the Settings window and stay synchronized.
 
 Snapping is controlled from the separate **TapeMeasure Settings** window. Multiple snap targets can be enabled at the same time; the nearest valid target within the configured snap radius is used.
 
