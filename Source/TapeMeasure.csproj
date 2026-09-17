@@ -1,0 +1,110 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{62508C26-2FDC-9745-F00D-9E818B6590FD}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>TapeMeasure</RootNamespace>
+    <AssemblyName>TapeMeasure</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>7.3</LangVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <TargetFrameworkProfile />
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(KSPDIR)\KSP_x64_Data\Managed\Assembly*.dll">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="$(KSPDIR)\KSP_x64_Data\Managed\UnityEngine*.dll">
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="ClickThroughBlocker">
+      <HintPath>$(KSPDIR)\GameData\000_ClickThroughBlocker\Plugins\ClickThroughBlocker.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="ToolbarControl">
+      <HintPath>$(KSPDIR)\GameData\001_ToolbarControl\Plugins\ToolbarControl.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="AssemblyVersion.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>AssemblyVersion.tt</DependentUpon>
+    </Compile>
+    <Compile Include="Dependencies.cs" />
+    <Compile Include="RegisterToolbar.cs" />
+    <Compile Include="SnapResolver.cs" />
+    <Compile Include="MeasurementPersistence.cs" />
+    <Compile Include="MeasurementPoint.cs" />
+    <Compile Include="MeasurementRecord.cs" />
+    <Compile Include="MeasurementRenderer.cs" />
+    <Compile Include="MeasurementUndo.cs" />
+    <Compile Include="TapeMeasure.cs" />
+    <Compile Include="TapeMeasureSettings.cs" />
+    <Compile Include="VesselDimensions.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="AssemblyVersion.tt">
+      <Generator>TextTemplatingFileGenerator</Generator>
+      <LastGenOutput>AssemblyVersion.cs</LastGenOutput>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
+  </ItemGroup>
+  <Target Name="CopyToGameData" AfterTargets="Build" Condition="'$(CopyToKSP)' == 'true'">
+    <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\Plugins" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\Plugins" />
+    <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\Textures" />
+    <Copy SourceFiles="$(SolutionDir)GameData\TapeMeasure\Textures\icon_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\cursor_measure.png" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\Textures" />
+    <Copy SourceFiles="$(SolutionDir)TapeMeasure.version" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure" />
+    <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\PluginData\DeltaVTables" />
+    <Copy SourceFiles="@(DeltaVTableFile)" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\PluginData\DeltaVTables" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SolutionDir)GameData\TapeMeasure\BulkheadProfiles.cfg;$(SolutionDir)GameData\TapeMeasure\decouplerMasses.cfg" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure" />
+  </Target>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <PreBuildEvent>"$(DevEnvDir)\texttransform.exe" "$(ProjectDir)AssemblyVersion.tt"</PreBuildEvent>
+  </PropertyGroup>
+  <PropertyGroup>
+    <PostBuildEvent>set KSPDIR=$(KSPDIR)
+
+IF "%25KSPDIR%25"=="" (
+
+	ECHO Configuration error - KSPDIR not specified in project.
+
+	ECHO Either set KSPDIR environment variable or edit BetterLoadSaveGame.Common.props
+
+	PAUSE
+
+	GOTO DONE
+
+)
+
+start /D $(SolutionDir) /WAIT deploy.bat  $(TargetDir) $(TargetFileName) $(TargetName)
+
+if $(ConfigurationName) == Release (	
+
+	start /D $(SolutionDir) /WAIT buildRelease.bat $(TargetDir) $(TargetFileName) $(TargetName)
+
+)
+</PostBuildEvent>
+  </PropertyGroup>
+</Project>

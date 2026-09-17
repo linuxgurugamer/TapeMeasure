@@ -1,0 +1,2 @@
+Build Source/TapeMeasure/TapeMeasure.csproj.
+The project writes TapeMeasure.dll into this directory.
