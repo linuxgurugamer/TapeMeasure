@@ -11,7 +11,7 @@ namespace TapeMeasure
         private const string RootNodeName = "TAPE_MEASURE_DATABASE";
         private const string CraftNodeName = "CRAFT";
         private const string MeasurementNodeName = "MEASUREMENT";
-        private const string DatabaseVersion = "4";
+        private const string DatabaseVersion = "7";
 
         private readonly string _path;
         private readonly string _legacyPath;
@@ -62,7 +62,8 @@ namespace TapeMeasure
                 }
 
                 result.Add(new MeasurementRecord(
-                    item.Id, item.Name, item.Kind, item.LockMode, a, b, c));
+                    item.Id, item.Name, item.Kind, item.LockMode, a, b, c,
+                    item.Visible, item.Group, item.DisplayColor, item.Notes));
             }
             return result;
         }
@@ -93,6 +94,10 @@ namespace TapeMeasure
                     item.Name = m.Name;
                     item.Kind = m.Kind;
                     item.LockMode = m.LockMode;
+                    item.Visible = m.Visible;
+                    item.Group = m.Group;
+                    item.DisplayColor = m.DisplayColor;
+                    item.Notes = m.Notes ?? string.Empty;
                     item.A = CopyPoint(m.PointA);
                     item.B = CopyPoint(m.PointB);
                     if (m.Kind == MeasurementKind.Angle) item.C = CopyPoint(m.PointC);
@@ -180,6 +185,10 @@ namespace TapeMeasure
                         mn.AddValue("name", item.Name ?? "Measurement");
                         mn.AddValue("kind", item.Kind.ToString());
                         mn.AddValue("lockMode", item.LockMode.ToString());
+                        mn.AddValue("visible", item.Visible);
+                        mn.AddValue("group", item.Group ?? string.Empty);
+                        mn.AddValue("color", ColorToHex(item.DisplayColor));
+                        mn.AddValue("notes", item.Notes ?? string.Empty);
                         AddStoredPoint(mn, "a", item.A);
                         AddStoredPoint(mn, "b", item.B);
                         if (item.Kind == MeasurementKind.Angle) AddStoredPoint(mn, "c", item.C);
@@ -243,6 +252,10 @@ namespace TapeMeasure
             item.Name = GetString(node, "name", "Measurement");
             item.Kind = ParseKind(GetString(node, "kind", "Distance"));
             item.LockMode = ParseLockMode(GetString(node, "lockMode", "PartRelative"));
+            item.Visible = GetBool(node, "visible", true);
+            item.Group = GetString(node, "group", string.Empty);
+            item.DisplayColor = ParseColor(GetString(node, "color", string.Empty), MeasurementRecord.DefaultDisplayColor);
+            item.Notes = GetString(node, "notes", string.Empty);
             item.A = ParsePoint(node, "a");
             item.B = ParsePoint(node, "b");
             if (item.A.CraftId == 0u || item.B.CraftId == 0u) return null;
@@ -322,6 +335,28 @@ namespace TapeMeasure
             return bool.TryParse(text, out value) ? value : fallback;
         }
 
+
+        private static string ColorToHex(Color color)
+        {
+            Color32 c = color;
+            return c.r.ToString("X2", CultureInfo.InvariantCulture) +
+                   c.g.ToString("X2", CultureInfo.InvariantCulture) +
+                   c.b.ToString("X2", CultureInfo.InvariantCulture);
+        }
+
+        private static Color ParseColor(string value, Color fallback)
+        {
+            if (string.IsNullOrEmpty(value)) return fallback;
+            string hex = value.Trim().TrimStart('#');
+            if (hex.Length != 6) return fallback;
+            byte r, g, b;
+            if (!byte.TryParse(hex.Substring(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out r) ||
+                !byte.TryParse(hex.Substring(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out g) ||
+                !byte.TryParse(hex.Substring(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out b))
+                return fallback;
+            return new Color32(r, g, b, 255);
+        }
+
         private static uint GetRootCraftId(ShipConstruct ship)
         {
             return ship == null || ship.parts == null || ship.parts.Count == 0 || ship.parts[0] == null ? 0u : ship.parts[0].craftID;
@@ -344,6 +379,10 @@ namespace TapeMeasure
             public string Name;
             public MeasurementKind Kind;
             public MeasurementLockMode LockMode;
+            public bool Visible = true;
+            public string Group = string.Empty;
+            public Color DisplayColor = MeasurementRecord.DefaultDisplayColor;
+            public string Notes = string.Empty;
             public StoredPoint A;
             public StoredPoint B;
             public StoredPoint C;

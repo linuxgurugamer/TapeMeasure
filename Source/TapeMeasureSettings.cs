@@ -14,6 +14,24 @@ namespace TapeMeasure
         FeetInches = 4
     }
 
+
+    internal enum DisplayPrecisionMode
+    {
+        Automatic = 0,
+        One = 1,
+        Two = 2,
+        Three = 3,
+        Four = 4
+    }
+
+    internal enum MeasurementSortMode
+    {
+        Creation = 0,
+        Name = 1,
+        Type = 2,
+        Value = 3
+    }
+
     /// <summary>
     /// Per-save UI/render preferences. These are intentionally separate from
     /// craft measurements so appearance and UI changes do not dirty
@@ -30,6 +48,10 @@ namespace TapeMeasure
         public bool ShowWorldLabels = true;
         public bool ShowWorldLabelValues = true;
         public bool ShowMeasurementGuides = false;
+        public bool ShowGuideLabels = false;
+        public bool ShowAngleArcs = true;
+        public bool ShowDimensionEndCaps = true;
+        public bool ShowBoundingBox = false;
         public bool EmphasizeSelected = true;
         public float SelectedMarkerMultiplier = 1.35f;
         public float SelectedLineMultiplier = 1.50f;
@@ -48,12 +70,14 @@ namespace TapeMeasure
         public bool SnapCenterOfLift = false;
         public bool SnapCenterOfThrust = false;
         public bool SnapVesselAxisGrid = false;
+        public bool SnapMeasurementPoints = false;
         public float SnapPixelRadius = 34f;
         public float VesselGridSize = 0.10f;
 
         public bool SymmetryAwareMeasurements = false;
         public MeasurementLockMode DefaultLockMode = MeasurementLockMode.PartRelative;
         public DistanceUnitMode DistanceUnits = DistanceUnitMode.Auto;
+        public DisplayPrecisionMode DisplayPrecision = DisplayPrecisionMode.Automatic;
 
         // Interface layout/skin preferences. The legacy "Show...Pane" field
         // names are retained for Settings.cfg compatibility; starting in 0.8.7
@@ -64,18 +88,41 @@ namespace TapeMeasure
         public bool ShowVesselDimensionsPane = true;
         public bool ShowMeasurementListPane = true;
         public bool SelectedMeasurementPaneExpanded = true;
+        public bool HideWindowWhileMeasuring = false;
+        // When true, stopping and later restarting measurement mode resumes an
+        // unfinished distance/angle from its existing A/B points. When false,
+        // Start Measuring abandons those unfinished points and begins fresh.
+        public bool RememberIncompleteMeasurementOnRestart = true;
+        public MeasurementSortMode MeasurementListSort = MeasurementSortMode.Creation;
+        public bool MeasurementListSortAscending = true;
+
+        // Keyboard shortcuts. These are per-save preferences and may be rebound
+        // in the Settings window. Axis bindings are held while placing/editing.
+        public ShortcutBinding ShortcutToggleMeasurement = new ShortcutBinding(KeyCode.M);
+        public ShortcutBinding ShortcutCancelMode = new ShortcutBinding(KeyCode.Escape);
+        public ShortcutBinding ShortcutNewDistance = new ShortcutBinding(KeyCode.None);
+        public ShortcutBinding ShortcutNewAngle = new ShortcutBinding(KeyCode.None);
+        public ShortcutBinding ShortcutEditEndpoints = new ShortcutBinding(KeyCode.None);
+        public ShortcutBinding ShortcutToggleLabels = new ShortcutBinding(KeyCode.None);
+        public ShortcutBinding ShortcutDeleteSelected = new ShortcutBinding(KeyCode.Delete);
+        public ShortcutBinding ShortcutCopySelected = new ShortcutBinding(KeyCode.C, true);
+        public ShortcutBinding ShortcutUndo = new ShortcutBinding(KeyCode.Z, true);
+        public ShortcutBinding ShortcutRedo = new ShortcutBinding(KeyCode.Y, true);
+        public ShortcutBinding ShortcutRedoAlternate = new ShortcutBinding(KeyCode.Z, true, true);
+        public ShortcutBinding ShortcutSnapModifier = new ShortcutBinding(KeyCode.LeftShift);
+        public ShortcutBinding ShortcutAxisX = new ShortcutBinding(KeyCode.X, false, false, true);
+        public ShortcutBinding ShortcutAxisY = new ShortcutBinding(KeyCode.Y, false, false, true);
+        public ShortcutBinding ShortcutAxisZ = new ShortcutBinding(KeyCode.Z, false, false, true);
 
         // Window/UI state. Window visibility itself is deliberately not saved;
         // entering the editor should always leave the tool discoverable.
         public bool HasWindowPosition = false;
         public float WindowX = 260f;
         public float WindowY = 90f;
+        public float WindowWidth = 600f;
         public bool HasSettingsWindowPosition = false;
         public float SettingsWindowX = 1120f;
         public float SettingsWindowY = 90f;
-        // Retains the original config key for backward compatibility. In 0.8.0
-        // this controls whether the separate Settings window is open.
-        public bool ShowSettingsPanel = false;
 
         public TapeMeasureSettings()
         {
@@ -102,6 +149,7 @@ namespace TapeMeasure
             InactiveOpacity = Mathf.Clamp(InactiveOpacity, 0.10f, 1f);
             SnapPixelRadius = Mathf.Clamp(SnapPixelRadius, 8f, 100f);
             VesselGridSize = Mathf.Clamp(VesselGridSize, 0.001f, 10f);
+            WindowWidth = Mathf.Clamp(WindowWidth, 320f, 2400f);
         }
 
         public void Save()
@@ -121,6 +169,10 @@ namespace TapeMeasure
                 node.AddValue("showWorldLabels", ShowWorldLabels);
                 node.AddValue("showWorldLabelValues", ShowWorldLabelValues);
                 node.AddValue("showMeasurementGuides", ShowMeasurementGuides);
+                node.AddValue("showGuideLabels", ShowGuideLabels);
+                node.AddValue("showAngleArcs", ShowAngleArcs);
+                node.AddValue("showDimensionEndCaps", ShowDimensionEndCaps);
+                node.AddValue("showBoundingBox", ShowBoundingBox);
                 node.AddValue("emphasizeSelected", EmphasizeSelected);
                 node.AddValue("selectedMarkerMultiplier", F(SelectedMarkerMultiplier));
                 node.AddValue("selectedLineMultiplier", F(SelectedLineMultiplier));
@@ -136,6 +188,7 @@ namespace TapeMeasure
                 node.AddValue("snapCenterOfLift", SnapCenterOfLift);
                 node.AddValue("snapCenterOfThrust", SnapCenterOfThrust);
                 node.AddValue("snapVesselAxisGrid", SnapVesselAxisGrid);
+                node.AddValue("snapMeasurementPoints", SnapMeasurementPoints);
                 node.AddValue("snapPixelRadius", F(SnapPixelRadius));
                 node.AddValue("vesselGridSize", F(VesselGridSize));
 
@@ -145,18 +198,38 @@ namespace TapeMeasure
                 node.AddValue("symmetryAwareMeasurements", SymmetryAwareMeasurements);
                 node.AddValue("defaultLockMode", DefaultLockMode.ToString());
                 node.AddValue("distanceUnits", DistanceUnits.ToString());
+                node.AddValue("displayPrecision", DisplayPrecision.ToString());
                 node.AddValue("useAlternateSkin", UseAlternateSkin);
                 node.AddValue("showSnappingPane", ShowSnappingPane);
                 node.AddValue("showVesselDimensionsPane", ShowVesselDimensionsPane);
                 node.AddValue("showMeasurementListPane", ShowMeasurementListPane);
                 node.AddValue("selectedMeasurementPaneExpanded", SelectedMeasurementPaneExpanded);
+                node.AddValue("hideWindowWhileMeasuring", HideWindowWhileMeasuring);
+                node.AddValue("rememberIncompleteMeasurementOnRestart", RememberIncompleteMeasurementOnRestart);
+                node.AddValue("measurementListSort", MeasurementListSort.ToString());
+                node.AddValue("measurementListSortAscending", MeasurementListSortAscending);
+                SaveShortcut(node, "shortcutToggleMeasurement", ShortcutToggleMeasurement);
+                SaveShortcut(node, "shortcutCancelMode", ShortcutCancelMode);
+                SaveShortcut(node, "shortcutNewDistance", ShortcutNewDistance);
+                SaveShortcut(node, "shortcutNewAngle", ShortcutNewAngle);
+                SaveShortcut(node, "shortcutEditEndpoints", ShortcutEditEndpoints);
+                SaveShortcut(node, "shortcutToggleLabels", ShortcutToggleLabels);
+                SaveShortcut(node, "shortcutDeleteSelected", ShortcutDeleteSelected);
+                SaveShortcut(node, "shortcutCopySelected", ShortcutCopySelected);
+                SaveShortcut(node, "shortcutUndo", ShortcutUndo);
+                SaveShortcut(node, "shortcutRedo", ShortcutRedo);
+                SaveShortcut(node, "shortcutRedoAlternate", ShortcutRedoAlternate);
+                SaveShortcut(node, "shortcutSnapModifier", ShortcutSnapModifier);
+                SaveShortcut(node, "shortcutAxisX", ShortcutAxisX);
+                SaveShortcut(node, "shortcutAxisY", ShortcutAxisY);
+                SaveShortcut(node, "shortcutAxisZ", ShortcutAxisZ);
                 node.AddValue("hasWindowPosition", HasWindowPosition);
                 node.AddValue("windowX", F(WindowX));
                 node.AddValue("windowY", F(WindowY));
+                node.AddValue("windowWidth", F(WindowWidth));
                 node.AddValue("hasSettingsWindowPosition", HasSettingsWindowPosition);
                 node.AddValue("settingsWindowX", F(SettingsWindowX));
                 node.AddValue("settingsWindowY", F(SettingsWindowY));
-                node.AddValue("showSettingsPanel", ShowSettingsPanel);
 
                 string temp = _path + ".tmp";
                 node.Save(temp);
@@ -186,6 +259,10 @@ namespace TapeMeasure
                 ShowWorldLabels = GetBool(node, "showWorldLabels", ShowWorldLabels);
                 ShowWorldLabelValues = GetBool(node, "showWorldLabelValues", ShowWorldLabelValues);
                 ShowMeasurementGuides = GetBool(node, "showMeasurementGuides", ShowMeasurementGuides);
+                ShowGuideLabels = GetBool(node, "showGuideLabels", ShowGuideLabels);
+                ShowAngleArcs = GetBool(node, "showAngleArcs", ShowAngleArcs);
+                ShowDimensionEndCaps = GetBool(node, "showDimensionEndCaps", ShowDimensionEndCaps);
+                ShowBoundingBox = GetBool(node, "showBoundingBox", ShowBoundingBox);
                 EmphasizeSelected = GetBool(node, "emphasizeSelected", EmphasizeSelected);
                 SelectedMarkerMultiplier = GetFloat(node, "selectedMarkerMultiplier", SelectedMarkerMultiplier);
                 SelectedLineMultiplier = GetFloat(node, "selectedLineMultiplier", SelectedLineMultiplier);
@@ -208,6 +285,7 @@ namespace TapeMeasure
                 SnapCenterOfLift = GetBool(node, "snapCenterOfLift", SnapCenterOfLift);
                 SnapCenterOfThrust = GetBool(node, "snapCenterOfThrust", SnapCenterOfThrust);
                 SnapVesselAxisGrid = GetBool(node, "snapVesselAxisGrid", SnapVesselAxisGrid);
+                SnapMeasurementPoints = GetBool(node, "snapMeasurementPoints", SnapMeasurementPoints);
                 SnapPixelRadius = GetFloat(node, "snapPixelRadius", SnapPixelRadius);
                 VesselGridSize = GetFloat(node, "vesselGridSize", VesselGridSize);
 
@@ -217,13 +295,39 @@ namespace TapeMeasure
                 ShowVesselDimensionsPane = GetBool(node, "showVesselDimensionsPane", ShowVesselDimensionsPane);
                 ShowMeasurementListPane = GetBool(node, "showMeasurementListPane", ShowMeasurementListPane);
                 SelectedMeasurementPaneExpanded = GetBool(node, "selectedMeasurementPaneExpanded", SelectedMeasurementPaneExpanded);
+                HideWindowWhileMeasuring = GetBool(node, "hideWindowWhileMeasuring", HideWindowWhileMeasuring);
+                RememberIncompleteMeasurementOnRestart = GetBool(node,
+                    "rememberIncompleteMeasurementOnRestart",
+                    RememberIncompleteMeasurementOnRestart);
+
+                MeasurementSortMode sortMode;
+                if (Enum.TryParse(GetString(node, "measurementListSort", MeasurementListSort.ToString()), true, out sortMode))
+                    MeasurementListSort = sortMode;
+                MeasurementListSortAscending = GetBool(node, "measurementListSortAscending", MeasurementListSortAscending);
+
+                ShortcutToggleMeasurement = LoadShortcut(node, "shortcutToggleMeasurement", ShortcutToggleMeasurement);
+                ShortcutCancelMode = LoadShortcut(node, "shortcutCancelMode", ShortcutCancelMode);
+                ShortcutNewDistance = LoadShortcut(node, "shortcutNewDistance", ShortcutNewDistance);
+                ShortcutNewAngle = LoadShortcut(node, "shortcutNewAngle", ShortcutNewAngle);
+                ShortcutEditEndpoints = LoadShortcut(node, "shortcutEditEndpoints", ShortcutEditEndpoints);
+                ShortcutToggleLabels = LoadShortcut(node, "shortcutToggleLabels", ShortcutToggleLabels);
+                ShortcutDeleteSelected = LoadShortcut(node, "shortcutDeleteSelected", ShortcutDeleteSelected);
+                ShortcutCopySelected = LoadShortcut(node, "shortcutCopySelected", ShortcutCopySelected);
+                ShortcutUndo = LoadShortcut(node, "shortcutUndo", ShortcutUndo);
+                ShortcutRedo = LoadShortcut(node, "shortcutRedo", ShortcutRedo);
+                ShortcutRedoAlternate = LoadShortcut(node, "shortcutRedoAlternate", ShortcutRedoAlternate);
+                ShortcutSnapModifier = LoadShortcut(node, "shortcutSnapModifier", ShortcutSnapModifier);
+                ShortcutAxisX = LoadShortcut(node, "shortcutAxisX", ShortcutAxisX);
+                ShortcutAxisY = LoadShortcut(node, "shortcutAxisY", ShortcutAxisY);
+                ShortcutAxisZ = LoadShortcut(node, "shortcutAxisZ", ShortcutAxisZ);
+
                 HasWindowPosition = GetBool(node, "hasWindowPosition", HasWindowPosition);
                 WindowX = GetFloat(node, "windowX", WindowX);
                 WindowY = GetFloat(node, "windowY", WindowY);
+                WindowWidth = GetFloat(node, "windowWidth", WindowWidth);
                 HasSettingsWindowPosition = GetBool(node, "hasSettingsWindowPosition", HasSettingsWindowPosition);
                 SettingsWindowX = GetFloat(node, "settingsWindowX", SettingsWindowX);
                 SettingsWindowY = GetFloat(node, "settingsWindowY", SettingsWindowY);
-                ShowSettingsPanel = GetBool(node, "showSettingsPanel", ShowSettingsPanel);
 
                 MeasurementLockMode mode;
                 if (Enum.TryParse(GetString(node, "defaultLockMode", DefaultLockMode.ToString()), true, out mode))
@@ -233,12 +337,45 @@ namespace TapeMeasure
                 if (Enum.TryParse(GetString(node, "distanceUnits", DistanceUnits.ToString()), true, out units))
                     DistanceUnits = units;
 
+                DisplayPrecisionMode precision;
+                if (Enum.TryParse(GetString(node, "displayPrecision", DisplayPrecision.ToString()), true, out precision))
+                    DisplayPrecision = precision;
+
                 Clamp();
             }
             catch (Exception ex)
             {
                 Debug.LogError("[TapeMeasure] Failed to load settings: " + ex);
             }
+        }
+
+        public void ResetKeyboardShortcuts()
+        {
+            ShortcutToggleMeasurement = new ShortcutBinding(KeyCode.M);
+            ShortcutCancelMode = new ShortcutBinding(KeyCode.Escape);
+            ShortcutNewDistance = new ShortcutBinding(KeyCode.None);
+            ShortcutNewAngle = new ShortcutBinding(KeyCode.None);
+            ShortcutEditEndpoints = new ShortcutBinding(KeyCode.None);
+            ShortcutToggleLabels = new ShortcutBinding(KeyCode.None);
+            ShortcutDeleteSelected = new ShortcutBinding(KeyCode.Delete);
+            ShortcutCopySelected = new ShortcutBinding(KeyCode.C, true);
+            ShortcutUndo = new ShortcutBinding(KeyCode.Z, true);
+            ShortcutRedo = new ShortcutBinding(KeyCode.Y, true);
+            ShortcutRedoAlternate = new ShortcutBinding(KeyCode.Z, true, true);
+            ShortcutSnapModifier = new ShortcutBinding(KeyCode.LeftShift);
+            ShortcutAxisX = new ShortcutBinding(KeyCode.X, false, false, true);
+            ShortcutAxisY = new ShortcutBinding(KeyCode.Y, false, false, true);
+            ShortcutAxisZ = new ShortcutBinding(KeyCode.Z, false, false, true);
+        }
+
+        private static void SaveShortcut(ConfigNode node, string key, ShortcutBinding binding)
+        {
+            node.AddValue(key, binding != null ? binding.Serialize() : "None");
+        }
+
+        private static ShortcutBinding LoadShortcut(ConfigNode node, string key, ShortcutBinding fallback)
+        {
+            return ShortcutBinding.Parse(GetString(node, key, null), fallback);
         }
 
         private static string F(float value)

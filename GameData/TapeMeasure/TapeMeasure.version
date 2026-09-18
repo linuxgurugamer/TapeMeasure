@@ -1,19 +1,25 @@
 {
   "NAME": "TapeMeasure",
+  "URL": "https://raw.githubusercontent.com/linuxgurugamer/TapeMeasure/refs/heads/main/TapeMeasure.version",
+  "DOWNLOAD": "http://spacedock.info/mod/4570",
+  "GITHUB": {
+    "USERNAME": "linuxgurugamer",
+    "REPOSITORY": "TapeMeasure"
+  },
   "VERSION": {
     "MAJOR": 0,
-    "MINOR": 9,
-    "PATCH": 0,
+    "MINOR": 10,
+    "PATCH": 19,
     "BUILD": 0
   },
   "KSP_VERSION_MIN": {
-    "MAJOR": 1,
-    "MINOR": 12,
-    "PATCH": 0
+    "MAJOR": 0,
+    "MINOR": 10,
+    "PATCH": 13
   },
   "KSP_VERSION_MAX": {
-    "MAJOR": 1,
-    "MINOR": 12,
-    "PATCH": 99
+    "MAJOR": 0,
+    "MINOR": 10,
+    "PATCH": 13
   }
 }

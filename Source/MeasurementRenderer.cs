@@ -17,6 +17,8 @@ namespace TapeMeasure
         private readonly Material _guideMaterialX;
         private readonly Material _guideMaterialY;
         private readonly Material _guideMaterialZ;
+        private readonly Material _boundingBoxMaterial;
+        private readonly LineRenderer _boundingBoxLine;
         private readonly Dictionary<string, MeasurementVisual> _visuals =
             new Dictionary<string, MeasurementVisual>();
 
@@ -28,6 +30,7 @@ namespace TapeMeasure
         private readonly Color _guideColorX = new Color(1.00f, 0.25f, 0.20f, 0.90f);
         private readonly Color _guideColorY = new Color(0.25f, 1.00f, 0.30f, 0.90f);
         private readonly Color _guideColorZ = new Color(0.25f, 0.55f, 1.00f, 0.90f);
+        private readonly Color _boundingBoxColor = new Color(0.25f, 0.90f, 1.00f, 0.75f);
 
         public MeasurementRenderer()
         {
@@ -36,12 +39,14 @@ namespace TapeMeasure
             _markerMaterialA = CreateMaterial(_colorA);
             _markerMaterialB = CreateMaterial(_colorB);
             _markerMaterialC = CreateMaterial(_colorC);
-            _lineMaterial = CreateMaterial(_lineColor);
+            _lineMaterial = CreateMaterial(Color.white);
             _previewMaterial = CreateMaterial(_previewColor);
             _previewLine = CreateLine("Measurement Preview", _root.transform, _previewMaterial);
             _guideMaterialX = CreateMaterial(_guideColorX);
             _guideMaterialY = CreateMaterial(_guideColorY);
             _guideMaterialZ = CreateMaterial(_guideColorZ);
+            _boundingBoxMaterial = CreateMaterial(_boundingBoxColor);
+            _boundingBoxLine = CreateLine("Vessel Bounding Box", _root.transform, _boundingBoxMaterial);
         }
 
         public void Update(
@@ -49,6 +54,7 @@ namespace TapeMeasure
             Camera camera,
             bool visible,
             string selectedId,
+            string hoveredId,
             TapeMeasureSettings settings)
         {
             if (_root == null) return;
@@ -71,7 +77,13 @@ namespace TapeMeasure
                         visual = CreateVisual(m.Id);
                         _visuals.Add(m.Id, visual);
                     }
-                    UpdateVisual(visual, m, camera, m.Id == selectedId, settings);
+
+                    visual.Root.SetActive(m.Visible);
+                    if (m.Visible)
+                        UpdateVisual(visual, m, camera,
+                            m.Id == selectedId,
+                            m.Id == hoveredId,
+                            settings);
                 }
             }
 
@@ -83,6 +95,57 @@ namespace TapeMeasure
             {
                 DestroyVisual(_visuals[remove[i]]);
                 _visuals.Remove(remove[i]);
+            }
+        }
+
+        public void UpdateBoundingBox(
+            Camera camera,
+            bool visible,
+            VesselDimensions dimensions,
+            Quaternion vesselRotation,
+            TapeMeasureSettings settings)
+        {
+            if (_boundingBoxLine == null)
+                return;
+
+            bool enabled = visible && settings != null && settings.ShowBoundingBox && dimensions.IsValid;
+            _boundingBoxLine.enabled = enabled;
+            if (!enabled)
+                return;
+
+            Vector3 min = dimensions.Minimum;
+            Vector3 max = dimensions.Maximum;
+            Vector3[] c = new Vector3[8];
+            c[0] = vesselRotation * new Vector3(min.x, min.y, min.z);
+            c[1] = vesselRotation * new Vector3(max.x, min.y, min.z);
+            c[2] = vesselRotation * new Vector3(min.x, max.y, min.z);
+            c[3] = vesselRotation * new Vector3(max.x, max.y, min.z);
+            c[4] = vesselRotation * new Vector3(min.x, min.y, max.z);
+            c[5] = vesselRotation * new Vector3(max.x, min.y, max.z);
+            c[6] = vesselRotation * new Vector3(min.x, max.y, max.z);
+            c[7] = vesselRotation * new Vector3(max.x, max.y, max.z);
+
+            int[] path = new int[]
+            {
+                0, 1, 3, 2, 0, 4, 5, 1, 5, 7, 3, 7, 6, 2, 6, 4
+            };
+
+            _boundingBoxLine.positionCount = path.Length;
+            for (int i = 0; i < path.Length; ++i)
+                _boundingBoxLine.SetPosition(i, c[path[i]]);
+
+            _boundingBoxLine.startColor = _boundingBoxColor;
+            _boundingBoxLine.endColor = _boundingBoxColor;
+
+            if (camera != null)
+            {
+                Vector3 centerLocal = (min + max) * 0.5f;
+                Vector3 centerWorld = vesselRotation * centerLocal;
+                float distance = Vector3.Distance(camera.transform.position, centerWorld);
+                float width = Mathf.Clamp(distance * 0.0012f, 0.006f, 0.10f)
+                    * settings.LineWidthMultiplier;
+                _boundingBoxLine.startWidth = width;
+                _boundingBoxLine.endWidth = width;
             }
         }
 
@@ -130,6 +193,7 @@ namespace TapeMeasure
             if (_guideMaterialX != null) Object.Destroy(_guideMaterialX);
             if (_guideMaterialY != null) Object.Destroy(_guideMaterialY);
             if (_guideMaterialZ != null) Object.Destroy(_guideMaterialZ);
+            if (_boundingBoxMaterial != null) Object.Destroy(_boundingBoxMaterial);
         }
 
         private MeasurementVisual CreateVisual(string id)
@@ -144,6 +208,9 @@ namespace TapeMeasure
             visual.MarkerC = CreateMarker("Point C", visual.Root.transform, _markerMaterialC, out visual.RendererC);
 
             visual.Line = CreateLine("Measurement Line", visual.Root.transform, _lineMaterial);
+            visual.AngleArc = CreateLine("Angle Arc", visual.Root.transform, _lineMaterial);
+            visual.EndCapA = CreateLine("Dimension End A", visual.Root.transform, _lineMaterial);
+            visual.EndCapB = CreateLine("Dimension End B", visual.Root.transform, _lineMaterial);
             visual.GuideAX = CreateLine("Guide A X", visual.Root.transform, _guideMaterialX);
             visual.GuideAY = CreateLine("Guide A Y", visual.Root.transform, _guideMaterialY);
             visual.GuideAZ = CreateLine("Guide A Z", visual.Root.transform, _guideMaterialZ);
@@ -159,6 +226,7 @@ namespace TapeMeasure
             MeasurementRecord m,
             Camera camera,
             bool selected,
+            bool hovered,
             TapeMeasureSettings settings)
         {
             bool hasA = m.HasPointA;
@@ -192,14 +260,28 @@ namespace TapeMeasure
                 }
             }
 
-            float opacity = selected || !settings.EmphasizeSelected ? 1f : settings.InactiveOpacity;
-            SetRendererColor(visual.RendererA, WithAlpha(_colorA, opacity));
-            SetRendererColor(visual.RendererB, WithAlpha(_colorB, opacity));
-            SetRendererColor(visual.RendererC, WithAlpha(_colorC, opacity));
+            bool showAngleArc = settings.ShowAngleArcs &&
+                                m.Kind == MeasurementKind.Angle &&
+                                m.IsComplete;
+            UpdateAngleArc(visual.AngleArc, m, showAngleArc);
 
-            Color lineColor = WithAlpha(_lineColor, opacity);
-            visual.Line.startColor = lineColor;
-            visual.Line.endColor = lineColor;
+            bool emphasized = selected || hovered;
+            float opacity = hovered || selected || !settings.EmphasizeSelected ? 1f : settings.InactiveOpacity;
+            Color measurementColor = m.DisplayColor;
+            measurementColor.a = 1f;
+            Color visualColor = WithAlpha(measurementColor, opacity);
+            SetRendererColor(visual.RendererA, visualColor);
+            SetRendererColor(visual.RendererB, visualColor);
+            SetRendererColor(visual.RendererC, visualColor);
+
+            visual.Line.startColor = visualColor;
+            visual.Line.endColor = visualColor;
+            visual.AngleArc.startColor = visualColor;
+            visual.AngleArc.endColor = visualColor;
+            visual.EndCapA.startColor = visualColor;
+            visual.EndCapA.endColor = visualColor;
+            visual.EndCapB.startColor = visualColor;
+            visual.EndCapB.endColor = visualColor;
 
             bool showGuides = selected &&
                               settings.ShowMeasurementGuides &&
@@ -209,10 +291,12 @@ namespace TapeMeasure
 
             if (camera == null) return;
 
-            float selectedMarker = selected && settings.EmphasizeSelected
-                ? settings.SelectedMarkerMultiplier : 1f;
-            float selectedLine = selected && settings.EmphasizeSelected
-                ? settings.SelectedLineMultiplier : 1f;
+            float selectedMarker = hovered
+                ? Mathf.Max(1.35f, settings.SelectedMarkerMultiplier)
+                : (selected && settings.EmphasizeSelected ? settings.SelectedMarkerMultiplier : 1f);
+            float selectedLine = hovered
+                ? Mathf.Max(1.50f, settings.SelectedLineMultiplier)
+                : (selected && settings.EmphasizeSelected ? settings.SelectedLineMultiplier : 1f);
 
             if (hasA) ScaleMarker(visual.MarkerA, camera, settings.MarkerSizeMultiplier * selectedMarker);
             if (hasB) ScaleMarker(visual.MarkerB, camera, settings.MarkerSizeMultiplier * selectedMarker);
@@ -233,11 +317,124 @@ namespace TapeMeasure
                     visual.Line.endWidth = width;
                 }
 
+                if (visual.AngleArc.enabled)
+                {
+                    visual.AngleArc.startWidth = width * 0.80f;
+                    visual.AngleArc.endWidth = width * 0.80f;
+                }
+
                 if (showGuides)
                 {
                     float guideWidth = width * 0.65f;
                     SetGuideWidth(visual, guideWidth);
                 }
+
+                bool showEndCaps = settings.ShowDimensionEndCaps &&
+                                   settings.ShowMeasurementLines &&
+                                   m.Kind == MeasurementKind.Distance &&
+                                   m.IsComplete;
+                UpdateDimensionEndCaps(visual, m, camera, showEndCaps, width);
+            }
+            else
+            {
+                visual.EndCapA.enabled = false;
+                visual.EndCapB.enabled = false;
+            }
+        }
+
+        private static void UpdateDimensionEndCaps(
+            MeasurementVisual visual,
+            MeasurementRecord measurement,
+            Camera camera,
+            bool enabled,
+            float lineWidth)
+        {
+            visual.EndCapA.enabled = enabled;
+            visual.EndCapB.enabled = enabled;
+            if (!enabled || camera == null) return;
+
+            Vector3 a = measurement.GetWorldPosition(measurement.PointA);
+            Vector3 b = measurement.GetWorldPosition(measurement.PointB);
+            Vector3 direction = b - a;
+            if (direction.sqrMagnitude < 1e-8f)
+            {
+                visual.EndCapA.enabled = false;
+                visual.EndCapB.enabled = false;
+                return;
+            }
+
+            direction.Normalize();
+
+            // Keep the tick perpendicular to the measurement as seen by the
+            // camera.  Using the view vector at the measurement midpoint gives
+            // a stable screen-facing orientation even when the editor camera
+            // is not aligned with camera.transform.forward.
+            Vector3 midpoint = (a + b) * 0.5f;
+            Vector3 viewDirection = (midpoint - camera.transform.position).normalized;
+            Vector3 perpendicular = Vector3.Cross(direction, viewDirection);
+            if (perpendicular.sqrMagnitude < 1e-6f)
+                perpendicular = Vector3.Cross(direction, camera.transform.up);
+            if (perpendicular.sqrMagnitude < 1e-6f)
+                perpendicular = Vector3.Cross(direction, camera.transform.right);
+            if (perpendicular.sqrMagnitude < 1e-6f)
+                perpendicular = Vector3.up;
+            perpendicular.Normalize();
+
+            float distance = Vector3.Distance(camera.transform.position, midpoint);
+
+            // Make the CAD ticks deliberately larger/thicker than the normal
+            // measurement line.  The endpoints lie on the vessel surface, so
+            // move the tick centers slightly toward the camera to prevent the
+            // vessel skin or endpoint spheres from hiding them.
+            float halfLength = Mathf.Clamp(distance * 0.016f, 0.060f, 0.50f);
+            float surfaceOffset = Mathf.Clamp(distance * 0.0015f, 0.004f, 0.05f);
+            Vector3 aTowardCamera = (camera.transform.position - a).normalized;
+            Vector3 bTowardCamera = (camera.transform.position - b).normalized;
+            Vector3 capA = a + aTowardCamera * surfaceOffset;
+            Vector3 capB = b + bTowardCamera * surfaceOffset;
+
+            SetGuide(visual.EndCapA, capA - perpendicular * halfLength, capA + perpendicular * halfLength);
+            SetGuide(visual.EndCapB, capB - perpendicular * halfLength, capB + perpendicular * halfLength);
+            SetLineWidth(visual.EndCapA, lineWidth * 1.6f);
+            SetLineWidth(visual.EndCapB, lineWidth * 1.6f);
+        }
+
+        private static void UpdateAngleArc(
+            LineRenderer arc,
+            MeasurementRecord measurement,
+            bool enabled)
+        {
+            if (arc == null)
+                return;
+
+            arc.enabled = enabled;
+            if (!enabled)
+                return;
+
+            Vector3 vertex = measurement.GetWorldPosition(measurement.PointB);
+            Vector3 ba = measurement.GetWorldPosition(measurement.PointA) - vertex;
+            Vector3 bc = measurement.GetWorldPosition(measurement.PointC) - vertex;
+            float lenA = ba.magnitude;
+            float lenC = bc.magnitude;
+            if (lenA < 0.0001f || lenC < 0.0001f)
+            {
+                arc.enabled = false;
+                return;
+            }
+
+            const int segments = 24;
+            float radius = Mathf.Max(0.02f, Mathf.Min(lenA, lenC) * 0.22f);
+            Vector3 dirA = ba / lenA;
+            Vector3 dirC = bc / lenC;
+
+            arc.positionCount = segments + 1;
+            for (int i = 0; i <= segments; ++i)
+            {
+                float t = i / (float)segments;
+                Vector3 dir = Vector3.Slerp(dirA, dirC, t);
+                if (dir.sqrMagnitude < 1e-8f)
+                    dir = Vector3.Lerp(dirA, dirC, t).normalized;
+                arc.SetPosition(i, vertex + dir.normalized * radius);
             }
         }
 
@@ -383,6 +580,9 @@ namespace TapeMeasure
             public Renderer RendererB;
             public Renderer RendererC;
             public LineRenderer Line;
+            public LineRenderer AngleArc;
+            public LineRenderer EndCapA;
+            public LineRenderer EndCapB;
 
             public LineRenderer GuideAX;
             public LineRenderer GuideAY;

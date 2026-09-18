@@ -23,13 +23,19 @@ namespace TapeMeasure
         public string Name { get; set; }
         public MeasurementKind Kind { get; private set; }
         public MeasurementLockMode LockMode { get; private set; }
+        public bool Visible { get; set; }
+        public string Group { get; set; }
+        public Color DisplayColor { get; set; }
+        public string Notes { get; set; }
+
+        public static readonly Color DefaultDisplayColor = new Color(1.00f, 0.90f, 0.10f, 1.00f);
 
         public MeasurementPoint PointA { get; private set; }
         public MeasurementPoint PointB { get; private set; }
         public MeasurementPoint PointC { get; private set; }
 
         public MeasurementRecord(MeasurementKind kind, string name, MeasurementLockMode lockMode)
-            : this(Guid.NewGuid().ToString("N"), name, kind, lockMode, null, null, null)
+            : this(Guid.NewGuid().ToString("N"), name, kind, lockMode, null, null, null, true, string.Empty, DefaultDisplayColor)
         {
         }
 
@@ -41,6 +47,35 @@ namespace TapeMeasure
             MeasurementPoint pointA,
             MeasurementPoint pointB,
             MeasurementPoint pointC)
+            : this(id, name, kind, lockMode, pointA, pointB, pointC, true, string.Empty, DefaultDisplayColor)
+        {
+        }
+
+        public MeasurementRecord(
+            string id,
+            string name,
+            MeasurementKind kind,
+            MeasurementLockMode lockMode,
+            MeasurementPoint pointA,
+            MeasurementPoint pointB,
+            MeasurementPoint pointC,
+            bool visible)
+            : this(id, name, kind, lockMode, pointA, pointB, pointC, visible, string.Empty, DefaultDisplayColor)
+        {
+        }
+
+        public MeasurementRecord(
+            string id,
+            string name,
+            MeasurementKind kind,
+            MeasurementLockMode lockMode,
+            MeasurementPoint pointA,
+            MeasurementPoint pointB,
+            MeasurementPoint pointC,
+            bool visible,
+            string group,
+            Color displayColor,
+            string notes = null)
         {
             Id = string.IsNullOrEmpty(id) ? Guid.NewGuid().ToString("N") : id;
             Name = string.IsNullOrEmpty(name) ? "Measurement" : name;
@@ -49,6 +84,11 @@ namespace TapeMeasure
             PointA = pointA;
             PointB = pointB;
             PointC = pointC;
+            Visible = visible;
+            Group = string.IsNullOrEmpty(group) ? string.Empty : group;
+            displayColor.a = 1f;
+            DisplayColor = displayColor;
+            Notes = notes ?? string.Empty;
         }
 
         public bool HasPointA { get { return PointA != null && PointA.IsValid(LockMode); } }

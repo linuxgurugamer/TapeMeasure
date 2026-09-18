@@ -1,8 +1,8 @@
-﻿# TapeMeasure
+# TapeMeasure
 
-TapeMeasure is an editor-only measuring and layout tool for **Kerbal Space Program 1**. It runs in the VAB and SPH and lets you place measurements directly on a vessel, keep multiple named measurements, inspect vessel dimensions, snap to useful vessel geometry, and edit measurements after they are created.
+TapeMeasure is an editor-only measuring and layout tool for **Kerbal Space Program 1**. It runs in the VAB and SPH and lets you place, organize, edit, display, and export measurements directly on a vessel.
 
-TapeMeasure is intended for building tasks such as checking vehicle width and height, wheelbase, engine spacing, payload clearances, wing geometry, attachment locations, and angles between structural points.
+It is useful for checking vehicle width and height, wheelbase, engine spacing, payload clearances, wing geometry, landing-gear layout, attachment locations, structural angles, and other editor geometry.
 
 ## Requirements
 
@@ -33,198 +33,266 @@ Install ToolbarController and ClickThroughBlocker separately if they are not alr
 
 ## Opening TapeMeasure
 
-TapeMeasure starts with its main window hidden. Enter the VAB or SPH and click the TapeMeasure toolbar icon to open it. The toolbar icon changes while measurement mode is active. While measurement mode is active, TapeMeasure also uses a custom measurement cursor registered through KSP's cursor controller.
+TapeMeasure starts with its main window hidden. Enter the VAB or SPH and click the TapeMeasure toolbar icon to open it. The toolbar icon changes while measurement mode is active. If the option to hide the main window while measuring is enabled, TapeMeasure shows a small **Press Esc to end measuring** reminder while the window is hidden; the reminder blinks on and off every two seconds.
 
-The main window also includes a **Show measurement labels in the editor view** toggle so editor labels can be enabled or hidden without opening Settings.
+The main window contains collapsible panes for snapping, automatic vessel dimensions, the measurement list, and the selected measurement. Pane headings remain visible when collapsed and the window resizes to fit the visible content. When the Measurement List is expanded, TapeMeasure also measures the displayed data and automatically widens the window as needed so the row values remain on one line.
 
-The main window contains collapsible sections for:
+An optional setting can temporarily hide the main window while a measurement is being placed. It returns automatically when measurement mode ends.
 
-- Snapping
-- Automatic vessel dimensions
-- Measurement list
-- Selected measurement
 
-Click a section heading to expand or collapse it. The window resizes to fit the visible sections. The Selected Measurement section is shown only after a measurement has been explicitly selected.
+## Settings window
+
+The Settings window always starts closed when entering the editor; its open/closed state is not saved between sessions. Settings are organized into five tabs:
+
+The Settings window uses a compact, scrollable height.
+
+- **Snapping** — snap targets, symmetry-aware measurements, and the default measurement lock mode.
+- **Interface** — skin selection, pane expansion defaults, and hiding the main window while measuring.
+- **Display** — units, precision, measurement lines, labels, guides, angle arcs, end ticks, and vessel bounding-box display.
+- **Markers** — marker size, line width, selected-measurement emphasis, and inactive opacity.
+- **Keyboard** — configurable key bindings and reset-to-default controls.
+
+## Interrupted measurements
+
+Settings → Interface includes **Remember unfinished points when Start Measuring is clicked again; when an unfinished measurement can be resumed, the main button changes to **Continue Measuring****. When enabled, stopping measurement mode after placing point A (or A/B of an angle) and later pressing **Start Measuring** resumes from those points. When disabled, **Start Measuring** discards the unfinished points and starts a fresh measurement of the same type.
 
 ## Measuring a distance
 
-1. Click **New Distance**, or press **M** to enter measurement mode.
-2. Click the first point on the vessel.
-3. Move the mouse. A live preview line is drawn from the first point to the current mouse/snap target.
-4. Click the second point.
+1. Click **New Distance**, or use the configured measurement shortcut.
+2. Click point **A** on the vessel.
+3. Move the mouse. A live preview line follows the mouse or current snap target.
+4. Click point **B**.
 5. The completed measurement is added to the Measurement List.
 
-TapeMeasure shows the straight-line distance and the vessel-axis X, Y, and Z components. Free surface points are resolved against the visible Part mesh when possible, preventing recessed/internal colliders from pulling points below the visible skin.
-
-Creating a measurement does not automatically select it. Click its row in the Measurement List when you want to highlight it or edit its details.
+TapeMeasure displays the straight-line distance and the vessel-axis X, Y, and Z components. Distance lines can also show CAD-style end ticks.
 
 ## Measuring an angle
 
-1. Click **New Angle**.
+1. Click **New Angle** or use its configured shortcut.
 2. Select point **A**.
 3. Select point **B**, which is the angle vertex.
 4. Select point **C**.
 
-The resulting A-B-C angle is displayed in degrees, with B as the vertex.
+The resulting A-B-C angle is displayed in degrees. Optional angle arcs are drawn around vertex B.
 
-## Measurement list and selection
+## Axis constraints while placing points
 
-The Measurement List contains all current distance and angle measurements. A measurement can be selected by clicking anywhere in its row except the red delete `X`; deleting a row does not select it first.
+The next point can be constrained to a vessel axis through the previous point. The defaults are:
 
-Selecting a row:
+- **Alt+X** — constrain along vessel X
+- **Alt+Y** — constrain along vessel Y
+- **Alt+Z** — constrain along vessel Z
 
-- highlights that measurement in the editor
-- opens the Selected Measurement pane
-- allows renaming, lock-mode changes, endpoint editing, and other selected-measurement actions
+These bindings can be changed in Settings. Axis constraints work with the live preview and can be combined with snapping.
 
-Use **Clear Selection** at the top-right of the Selected Measurement pane to remove the selection and editor highlight without deleting the measurement.
+## Measurement list
 
-The Measurement List pane can be collapsed from its heading or from Settings. Clickable measurement values are shown as blue label-style controls; the per-row delete `X` is shown as a bold red label-style control. The Name and Lock columns are spaced for easier visual separation.
+The Measurement List supports large sets of measurements without changing their stored creation order.
 
-## Automatic vessel dimensions
+You can:
 
-The Automatic Vessel Dimensions pane shows the visible vessel envelope using active rendered part geometry:
+- filter by measurement name, group, or type
+- sort by creation order, name, type, or value
+- reverse the selected sort order
+- select a measurement by clicking its row
+- show or hide individual measurements
+- delete a measurement with the red `X`
+- click displayed values to copy them
+- change a measurement color using its color swatch
 
-- **Length (Z)**
-- **Width (X)**
-- **Height (Y)**
-- **Bounding box (X × Y × Z)**
+Hovering a list row temporarily emphasizes that measurement in the editor without selecting it. Hovering a visible measurement line or endpoint in the editor highlights its row in the list.
 
-Dimensions refresh automatically when KSP reports that the editor ship has been modified. The pane can be collapsed from its heading or from Settings.
+## Measurement groups and categories
+
+Each measurement can be assigned to a named group, such as:
+
+- Landing Gear
+- Payload
+- Engines
+- Wings
+
+Use the **Group** control in the Selected Measurement pane to assign or clear a group.
+
+The Measurement List displays each group under a collapsible heading. The visibility checkbox on a group heading shows or hides all measurements in that group. Individual measurement visibility is still retained separately and participates in Undo/Redo.
+
+Measurements without a group appear under **Ungrouped**.
+
+## Per-measurement colors
+
+Each measurement has its own persistent line and marker color. New measurements automatically rotate through a palette so adjacent measurements are easier to distinguish.
+
+You can change a color by:
+
+- clicking the color swatch in the Measurement List to cycle through the palette, or
+- selecting a measurement and choosing a color in the Selected Measurement pane.
+
+The selected color is used for its line, markers, angle arc, and distance end ticks.
+
+## Selection and endpoint editing
+
+Creating a measurement does not automatically select it. Click a row in the Measurement List to select and highlight it.
+
+The Selected Measurement pane lets you:
+
+- rename the measurement
+- assign a group
+- choose its color
+- show or hide it
+- switch between Part-relative and Vessel-relative locking
+- edit its endpoints
+- inspect and copy its values
+
+Use **Clear Selection** to remove the highlight without deleting the measurement.
+
+When endpoint editing is enabled, drag A/B for a distance or A/B/C for an angle. Snapping remains available while dragging.
 
 ## Snapping
 
-The main window has a collapsible **Snapping** pane containing the master snapping switch, all individual snap targets, snap radius, and vessel grid spacing. The same controls remain available in the Settings window and stay synchronized.
+Snapping has a master switch plus individually selectable target types:
 
-Snapping is controlled from the separate **TapeMeasure Settings** window. Multiple snap targets can be enabled at the same time; the nearest valid target within the configured snap radius is used.
+- Part origin
+- Attachment node
+- Surface attachment point
+- Part center
+- Vessel root
+- Center of Mass
+- Center of Lift
+- Center of Thrust
+- Vessel Axis / Grid
+- Existing TapeMeasure endpoints
 
-Available snap targets are:
+Multiple target types may be enabled at once. TapeMeasure selects the closest valid target within the configured snap radius.
 
-- **Part origin** — the selected part's transform origin
-- **Attachment node** — normal stack/docking attachment nodes
-- **Surface attachment point** — the part's surface-attachment node
-- **Part center** — center of the part's visible render bounds
-- **Vessel root** — root part origin
-- **Center of Mass**
-- **Center of Lift**
-- **Center of Thrust**
-- **Vessel Axis / Grid** — vessel X/Y/Z axes through the previous endpoint and a configurable vessel-local grid
+The configured snap modifier temporarily activates snapping without changing the saved master setting. By default this is **Shift**.
 
-The snap radius is configurable in screen pixels. Vessel grid spacing is also configurable.
-
-Holding **Shift** temporarily enables the configured snap targets without changing the saved master snapping setting.
-
-Snapping is used during normal point placement, the live preview line, and endpoint editing.
+Existing TapeMeasure endpoint snapping uses visible A/B/C points from other measurements and excludes the measurement currently being created or edited.
 
 ## Part-relative and vessel-relative measurements
 
-Each measurement can use one of two lock modes:
+Each measurement has a lock mode:
 
-- **Part-relative** — each endpoint follows the part it was placed on.
-- **Vessel-relative** — endpoints remain fixed in vessel coordinates even if the originally clicked part is moved.
+- **Part-relative** — each point remains attached to the Part on which it was placed.
+- **Vessel-relative** — the point remains fixed relative to the vessel reference frame even if the original Part is moved.
 
-Changing the lock mode rebases the measurement at its current visible position so the endpoints do not jump.
-
-## Editing endpoints
-
-Select a completed measurement and click **Edit Endpoints**.
-
-Click and drag an endpoint marker to reposition it. Distance measurements support A and B; angle measurements support A, B, and C. Snapping remains available while dragging.
-
-Endpoint graphics do not use physics colliders, so they do not interfere with normal vessel raycasts.
+Switching modes rebases the saved coordinates at the current visible position, so the measurement does not jump when the mode changes.
 
 ## Symmetry-aware measurements
 
-When **Create symmetry counterpart measurements** is enabled, TapeMeasure can create equivalent measurements on KSP symmetry counterparts. Symmetry-generated measurements are normal independent measurements afterward and can be renamed, edited, locked, copied, or deleted separately.
+When enabled, completing a measurement on parts with KSP symmetry counterparts automatically creates corresponding measurements on those counterparts. Generated copies inherit the source measurement's group, color, visibility, and lock mode.
 
-## Measurement guides
+## Automatic vessel dimensions
 
-For a selected distance measurement, optional projected component guides can be displayed in vessel coordinates:
+The Automatic Vessel Dimensions pane calculates the vessel's visible render envelope and shows:
 
-- **X** — red
-- **Y** — green
-- **Z** — blue
+- Length
+- Width
+- Height
+- X × Y × Z bounding-box dimensions
 
-These guides make the X/Y/Z components of a straight-line measurement easier to visualize.
+The dimensions refresh automatically on `onEditorShipModified`. An optional editor visualization draws the vessel bounding box.
 
-## Marker and line appearance
+## Guides, arcs, and dimension graphics
 
-The Settings window includes controls for:
+Display options include:
 
-- marker size
-- line width
-- measurement-line visibility
-- measurement-value visibility within world labels (the main window controls whether editor labels themselves are shown)
-- measurement-value visibility within world labels (hide numeric dimensions while keeping names visible)
-- X/Y/Z guide visibility
-- selected-measurement emphasis
-- selected marker and line multipliers
-- inactive measurement opacity
-- alternate GUI skin
+- X/Y/Z projection guides for the selected distance measurement
+- angle arcs for completed angle measurements
+- CAD-style end ticks on distance lines
+- vessel bounding-box visualization
+- measurement labels and optional values
+- marker size and line width controls
+- selected-measurement emphasis and inactive opacity
 
-The normal and Settings windows remember their positions between sessions.
+Guide colors remain X = red, Y = green, and Z = blue.
 
-## Undo
+## Undo and Redo
 
-TapeMeasure has its own measurement-specific undo stack, separate from KSP's editor undo system. It keeps up to 50 measurement operations.
+TapeMeasure has its own measurement-only Undo/Redo history and does not use KSP's vessel editor history.
 
-Undo covers measurement creation, point placement, symmetry-generated copies, deletion, Clear All, renaming, lock-mode changes, and endpoint dragging. A complete endpoint drag is recorded as one undo operation.
+Undo/Redo covers measurement creation and deletion, endpoint edits, names, groups, colors, visibility, lock changes, symmetry-generated copies, and other TapeMeasure data changes.
 
-Use the **Undo** button or press **Ctrl+Z**.
+The history is capped at 50 operations. A new change after Undo clears the Redo branch.
 
-The undo history is kept only for the current editor/craft session and is not written to the persistent measurement database.
+## Customizable keyboard shortcuts
+
+Open Settings to configure the keyboard bindings. Click a binding and press the replacement key combination. Bindings may also be cleared or reset to defaults.
+
+The configurable actions include:
+
+- measurement mode
+- cancel mode
+- new distance
+- new angle
+- endpoint editing
+- show/hide labels
+- delete selected
+- copy selected
+- Undo
+- Redo and alternate Redo
+- temporary snapping
+- vessel X/Y/Z constraints
+
+Default core bindings remain compatible with earlier TapeMeasure releases: `M`, `Esc`, `Delete`, `Ctrl+C`, `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`, and `Shift` for temporary snapping.
 
 ## Clipboard and CSV export
 
-Displayed measurement values can be copied to the clipboard. The Measurement List also provides:
+Displayed values can be clicked to copy them to the clipboard. The measurement list can also be copied or exported as CSV.
 
-- **Copy CSV** — copies the current measurement table as CSV text
-- **Export CSV** — writes a timestamped UTF-8 CSV file under:
+CSV export includes type, name, group, color, visibility, lock mode, formatted value, raw distance/angle values, vessel-axis components, and endpoint Part names.
+
+Exports are written beneath the current KSP save in:
 
 ```text
 saves/<SaveName>/TapeMeasure/Exports/
 ```
 
-CSV output includes measurement type, name, lock mode, formatted value, raw distance/angle data, raw X/Y/Z meter components, and endpoint part names.
-
-## Keyboard shortcuts
-
-- **M** — toggle measurement mode
-- **Esc** — exit measurement mode or endpoint-edit mode
-- **Delete** — delete the selected measurement
-- **Ctrl+C** — copy the selected measurement value
-- **Ctrl+Z** — undo the most recent TapeMeasure measurement change
-- **Shift** — temporarily enable configured snap targets while held
-
-Command shortcuts are suppressed while typing in text-entry fields so normal text editing and clipboard operations continue to work.
-
 ## Persistence
 
-Measurements are stored per KSP save under:
+Completed measurements are stored per save in:
 
 ```text
 saves/<SaveName>/TapeMeasure/Measurements.cfg
 ```
 
-TapeMeasure stores part-local and vessel-local endpoint coordinates so measurements can be restored with their selected lock behavior.
+The current database format is version 6. Older TapeMeasure measurement files remain loadable; measurements without saved group/color data are placed in **Ungrouped** and use the default measurement color.
 
-Preferences are stored under:
+Interface and appearance preferences are stored separately in:
 
 ```text
 saves/<SaveName>/TapeMeasure/Settings.cfg
 ```
 
-Saved preferences include window positions, snapping options, grid spacing, lock defaults, symmetry behavior, line/label/guide visibility, marker appearance, pane states, and other interface settings.
-
 ## Building from source
 
-The Visual Studio solution is `TapeMeasure.sln`. The project targets .NET Framework 4.8 and expects `KSPDIR` to point to the KSP installation directory so it can reference KSP, Unity, ToolbarController, and ClickThroughBlocker assemblies.
-
-A Release build uses the included deployment/release scripts to populate the GameData package.
+The project targets .NET Framework 4.8 and expects `KSPDIR` to point at the KSP installation. Open `TapeMeasure.sln` in Visual Studio and build the project, or use the included build scripts.
 
 ## License
 
-TapeMeasure is released under the MIT License. See [License.md](License.md).
+See `License.md`.
+
+## Guide value labels
+
+When X/Y/Z projection guides are enabled for a selected distance measurement, Settings can also show the formatted X, Y, and Z values directly on those guide lines. Guide value labels follow the current distance-unit setting and are suppressed when measurement dimension values are disabled.
 
 
-While measurement mode is active, TapeMeasure hides the normal pointer and draws its custom measurement cursor directly, avoiding cursor flicker from KSP editor cursor changes.
+## Display precision
+
+Settings includes a **Precision** control with Automatic, 1, 2, 3, and 4 decimal-place modes. Automatic preserves TapeMeasure's unit-aware formatting. Fixed precision applies to displayed distances, angles, editor labels, guide labels, clipboard values, and the formatted Value field in CSV exports. Raw stored measurement values and raw CSV numeric columns are unchanged.
+
+## Measurement notes
+
+Each measurement has an optional multi-line **Notes** field in the Selected Measurement pane. Notes are saved with the craft measurement, preserved by Undo/Redo and symmetry copies, searchable through the measurement-list filter, and included in CSV exports.
+
+When measurement mode starts, the Settings window closes automatically. **Esc** always exits measurement or endpoint-edit mode, regardless of the configurable Cancel binding.
+
+
+## Cursor state indicators
+
+While measurement mode is active, the cursor changes to show the current placement state. A green snap-target badge indicates that snapping is active. Holding a vessel-axis constraint adds **X**, **Y**, or **Z** to the cursor.
+
+The hidden-window **Press Esc to end measuring** reminder flashes once per second.
+
+
+### Settings tabs
+
+Settings are organized into **Snapping**, **Interface**, **Display**, **Markers**, and **Keyboard** tabs. The Keyboard tab uses a scrollable bindings list that fills the available Settings-window content area.

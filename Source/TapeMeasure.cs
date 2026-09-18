@@ -1,18 +1,18 @@
-﻿using System;
+using ClickThroughFix;
+using KSP.UI.Screens;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using ToolbarControl_NS;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using KSP.UI.Screens;
-using ClickThroughFix;
-using ToolbarControl_NS;
 
 namespace TapeMeasure
 {
     [KSPAddon(KSPAddon.Startup.EditorAny, false)]
-    public sealed class TapeMeasure : MonoBehaviour
+    public sealed partial class TapeMeasure : MonoBehaviour
     {
         internal const string ModId = "TapeMeasure_NS";
         internal const string ModName = "TapeMeasure";
@@ -23,9 +23,14 @@ namespace TapeMeasure
         private const string IconLargeMeasuring = "TapeMeasure/Textures/icon_measure_38";
         private const string IconSmallMeasuring = "TapeMeasure/Textures/icon_measure_24";
         private const string CursorMeasure = "TapeMeasure/Textures/cursor_measure";
+        private const string CursorMeasureSnap = "TapeMeasure/Textures/cursor_measure_snap";
         private const float EndpointGrabPixels = 24f;
         private const string EditorInputLockId = "TapeMeasure.EditorInputLock";
         private const string MeasurementNameControlName = "TapeMeasure.MeasurementName";
+        private const string MeasurementNotesControlName = "TapeMeasure.MeasurementNotes";
+        private const float MainWindowDefaultWidth = 600f;
+        private const float MainWindowMinWidth = 540f;
+        private const float MainWindowResizeGripWidth = 10f;
 
         private readonly List<MeasurementRecord> _measurements = new List<MeasurementRecord>();
         private readonly MeasurementUndoStack _measurementUndo = new MeasurementUndoStack();
@@ -49,7 +54,11 @@ namespace TapeMeasure
         private bool _persistenceDirty;
         private bool _settingsDirty;
         private bool _showSettings;
+        private int _settingsTab;
+        private int _lastMainSnapColumns = -1;
+        private int _lastSettingsSnapColumns = -1;
         private bool _measurementNameFieldFocused;
+        private bool _measurementNotesFieldFocused;
 
         private MeasurementEndpoint _dragEndpoint = MeasurementEndpoint.None;
         private string _dragSnapNodeId;
@@ -61,26 +70,38 @@ namespace TapeMeasure
 
         private MeasurementUndoState _nameEditUndoState;
         private string _nameEditMeasurementId;
+        private MeasurementUndoState _notesEditUndoState;
+        private string _notesEditMeasurementId;
 
         private string _currentShipName = string.Empty;
         private string _statusMessage = "Click a measurement value to copy it to the clipboard.";
         private float _saveAfterRealtime;
         private float _settingsSaveAfterRealtime;
         private float _statusUntilRealtime;
+        private float _measurementBlinkStartRealtime;
 
-        private Rect _windowRect = new Rect(260f, 90f, 600f, 0f);
+        private Rect _windowRect = new Rect(260f, 90f, MainWindowDefaultWidth, 0f);
+        private float _mainWindowWidth = MainWindowDefaultWidth;
         private Rect _settingsWindowRect = new Rect(1120f, 90f, 560f, 0f);
         private Vector2 _measurementScroll;
         private Vector2 _settingsScroll;
+        private Vector2 _keyboardShortcutScroll;
         private GUIStyle _statusStyle;
         private GUIStyle _tableHeaderStyle;
         private GUIStyle _selectedNameStyle;
         private GUIStyle _worldLabelStyle;
+        private GUIStyle _guideLabelStyle;
         private GUIStyle _valueButtonStyle;
         private GUIStyle _deleteButtonStyle;
         private GUISkin _styleSkin;
         private Texture2D _measurementCursorTexture;
+        private Texture2D _measurementSnapCursorTexture;
         private bool _measurementCursorVisible;
+
+        // Live distance readout for the current distance-measurement preview.
+        private bool _previewDistanceVisible;
+        private Vector3 _previewDistanceStart;
+        private Vector3 _previewDistanceEnd;
 
         private void Awake()
         {
@@ -90,13 +111,18 @@ namespace TapeMeasure
         private void Start()
         {
             _settings = new TapeMeasureSettings();
-            _showSettings = _settings.ShowSettingsPanel;
+            // Settings is deliberately session-only UI state. Never reopen the
+            // Settings window automatically when entering the editor.
+            _showSettings = false;
+            _settingsTab = 0;
 
             if (_settings.HasWindowPosition)
             {
                 _windowRect.x = _settings.WindowX;
                 _windowRect.y = _settings.WindowY;
             }
+            _mainWindowWidth = Mathf.Max(MainWindowMinWidth, _settings.WindowWidth);
+            _windowRect.width = _mainWindowWidth;
             if (_settings.HasSettingsWindowPosition)
             {
                 _settingsWindowRect.x = _settings.SettingsWindowX;
@@ -139,10 +165,19 @@ namespace TapeMeasure
             if (_settingsDirty && Time.realtimeSinceStartup >= _settingsSaveAfterRealtime) SaveSettings();
 
             Camera camera = GetEditorCamera();
+            UpdateEditorHover(camera);
+            HandleEditorMeasurementSelectionClick(camera);
             if (_renderer != null)
             {
                 _renderer.Update(_measurements, camera, _windowVisible,
                     _selectedMeasurement != null ? _selectedMeasurement.Id : null,
+                    GetHoverMeasurementId(),
+                    _settings);
+                _renderer.UpdateBoundingBox(
+                    camera,
+                    _windowVisible,
+                    _vesselDimensions,
+                    EditorLogic.VesselRotation,
                     _settings);
                 UpdateMeasurementPreview(camera);
             }
@@ -158,10 +193,21 @@ namespace TapeMeasure
             if (requestedSkin != null)
                 GUI.skin = requestedSkin;
             EnsureStyles();
+            HandleShortcutCaptureEvent();
+            EnsureMainWindowWideEnoughForMeasurementList();
 
-            _windowRect = ClickThruBlocker.GUILayoutWindow(
-                GetInstanceID(), _windowRect, DrawWindow, "Tape Measure", GUILayout.Width(600f));
-            TrackWindowPosition();
+            if (!IsMainWindowTemporarilyHidden())
+            {
+                _windowRect = ClickThruBlocker.GUILayoutWindow(
+                    GetInstanceID(), _windowRect, DrawWindow, "Tape Measure",
+                    GUILayout.Width(Mathf.Max(MainWindowMinWidth, _mainWindowWidth)));
+                _windowRect.width = _mainWindowWidth;
+                TrackWindowPosition();
+            }
+            else
+            {
+                DrawHiddenMeasurementModeMessage();
+            }
 
             if (_showSettings)
             {
@@ -172,6 +218,8 @@ namespace TapeMeasure
             }
 
             if (_settings != null && _settings.ShowWorldLabels) DrawWorldLabels();
+            DrawGuideLabels();
+            DrawPreviewDistanceLabel();
             DrawMeasurementCursor();
         }
 
@@ -221,7 +269,8 @@ namespace TapeMeasure
             else
             {
                 _measurementNameFieldFocused = false;
-                CommitPendingNameUndo();
+                _groupFieldFocused = false;
+                CommitPendingTextEdits();
             }
 
             GUILayout.Space(8f);
@@ -229,24 +278,117 @@ namespace TapeMeasure
             GUILayout.Space(5f);
             DrawStatusLine();
             GUILayout.EndVertical();
+
+            DrawMainWindowResizeGrip();
+
             // Controls consume their own mouse events first; any remaining area
-            // of the window can be used to drag it, not just the title bar.
-            GUI.DragWindow(new Rect(0f, 0f, 10000f, 10000f));
+            // of the window can be used to drag it, not just the title bar. Keep
+            // the right-edge resize grip out of the drag region.
+            GUI.DragWindow(new Rect(0f, 0f,
+                Mathf.Max(0f, _windowRect.width - MainWindowResizeGripWidth), 10000f));
+        }
+
+        private void DrawMainWindowResizeGrip()
+        {
+            Event e = Event.current;
+            if (e == null) return;
+
+            Rect grip = new Rect(
+                Mathf.Max(0f, _windowRect.width - MainWindowResizeGripWidth),
+                22f,
+                MainWindowResizeGripWidth,
+                Mathf.Max(24f, _windowRect.height - 22f));
+
+            int controlId = GUIUtility.GetControlID(
+                "TapeMeasure.MainWindowResize".GetHashCode(),
+                FocusType.Passive,
+                grip);
+
+            EventType type = e.GetTypeForControl(controlId);
+            if (type == EventType.MouseDown && e.button == 0 && grip.Contains(e.mousePosition))
+            {
+                GUIUtility.hotControl = controlId;
+                e.Use();
+            }
+            else if (type == EventType.MouseDrag && GUIUtility.hotControl == controlId)
+            {
+                float maxWidth = Mathf.Max(MainWindowMinWidth, Screen.width - _windowRect.x);
+                float desiredWidth = Input.mousePosition.x - _windowRect.x;
+                float newWidth = Mathf.Clamp(desiredWidth, MainWindowMinWidth, maxWidth);
+                if (Mathf.Abs(newWidth - _mainWindowWidth) > 0.5f)
+                {
+                    _mainWindowWidth = newWidth;
+                    _windowRect.width = newWidth;
+                    if (_settings != null)
+                    {
+                        _settings.WindowWidth = newWidth;
+                        MarkSettingsDirty();
+                    }
+                }
+                e.Use();
+            }
+            else if (type == EventType.MouseUp && GUIUtility.hotControl == controlId)
+            {
+                GUIUtility.hotControl = 0;
+                if (_settings != null)
+                {
+                    _settings.WindowWidth = _mainWindowWidth;
+                    MarkSettingsDirty(true);
+                }
+                e.Use();
+            }
+
+            if (e.type == EventType.Repaint)
+            {
+                Rect visual = new Rect(
+                    grip.x + 2f,
+                    grip.y + Mathf.Max(0f, (grip.height - 54f) * 0.5f),
+                    Mathf.Max(4f, grip.width - 4f),
+                    Mathf.Min(54f, grip.height));
+                GUI.Box(visual, GUIContent.none, GUI.skin.box);
+            }
+        }
+
+        private void DrawHiddenMeasurementModeMessage()
+        {
+            // Blink the reminder on and off at a one-second interval. Start
+            // each measurement session with the reminder visible.
+            float elapsed = Time.realtimeSinceStartup - _measurementBlinkStartRealtime;
+            bool visible = Mathf.FloorToInt(elapsed / 1f) % 2 == 0;
+            if (!visible) return;
+
+            const string text = "Press Esc to end measuring";
+            GUIStyle style = new GUIStyle(GUI.skin.box);
+            style.fontStyle = FontStyle.Bold;
+            style.alignment = TextAnchor.MiddleCenter;
+            Vector2 size = style.CalcSize(new GUIContent(text));
+            float width = Mathf.Max(220f, size.x + 24f);
+            Rect rect = new Rect((Screen.width - width) * 0.5f, 36f, width, 30f);
+            GUI.Label(rect, text, style);
+        }
+
+        private static string GetMeasurementListDisplayName(string name)
+        {
+            const int maxCharacters = 12;
+            if (string.IsNullOrEmpty(name) || name.Length <= maxCharacters)
+                return name ?? string.Empty;
+
+            // Keep the displayed text to exactly 12 characters including the
+            // ellipsis; the complete name remains editable in Selected Measurement.
+            return name.Substring(0, maxCharacters - 1) + "…";
         }
 
         private void DrawSettingsWindow(int windowId)
         {
             GUILayout.BeginVertical();
-            float settingsHeight = Mathf.Clamp(Screen.height - 180f, 320f, 700f);
+            float settingsHeight = Mathf.Clamp(Screen.height - 300f, 280f, 520f);
             _settingsScroll = GUILayout.BeginScrollView(_settingsScroll, GUILayout.Height(settingsHeight));
-            DrawSettingsPanel();
+            DrawSettingsPanel(settingsHeight);
             GUILayout.EndScrollView();
             GUILayout.Space(6f);
             if (GUILayout.Button("Close", GUILayout.Height(28f)))
             {
                 _showSettings = false;
-                _settings.ShowSettingsPanel = false;
-                MarkSettingsDirty(true);
             }
             GUILayout.EndVertical();
             GUI.DragWindow(new Rect(0f, 0f, 10000f, 10000f));
@@ -255,8 +397,26 @@ namespace TapeMeasure
         private void DrawMeasurementControls()
         {
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(_measurementMode ? "Stop Measuring" : "Start Measuring", GUILayout.Height(30f)))
-                SetMeasurementMode(!_measurementMode);
+
+            bool canContinueMeasurement =
+                !_measurementMode &&
+                _settings != null &&
+                _settings.RememberIncompleteMeasurementOnRestart &&
+                _activeMeasurement != null &&
+                !_activeMeasurement.IsComplete &&
+                _activeMeasurement.HasPointA;
+
+            string measurementButtonText = _measurementMode
+                ? "Stop Measuring"
+                : (canContinueMeasurement ? "Continue Measuring" : "Start Measuring");
+
+            if (GUILayout.Button(measurementButtonText, GUILayout.Height(30f)))
+            {
+                if (_measurementMode)
+                    SetMeasurementMode(false);
+                else
+                    StartMeasurementModeFromControl();
+            }
 
             if (GUILayout.Button("New Distance", GUILayout.Height(30f), GUILayout.Width(125f)))
             {
@@ -276,16 +436,14 @@ namespace TapeMeasure
             if (showSettings != _showSettings)
             {
                 _showSettings = showSettings;
-                _settings.ShowSettingsPanel = showSettings;
-                MarkSettingsDirty();
             }
             GUILayout.EndHorizontal();
 
             string instruction = (_measurementMode || _endpointEditMode)
                 ? GetMeasurementInstruction()
                 : "Measurement mode is off.";
-            if (_measurementMode)
-                instruction += " Hold Shift to temporarily enable the configured snap targets.";
+            if (_measurementMode && _settings.ShortcutSnapModifier != null && _settings.ShortcutSnapModifier.IsBound)
+                instruction += " Hold " + _settings.ShortcutSnapModifier + " to temporarily enable the configured snap targets.";
             GUILayout.Label(instruction, _statusStyle);
 
             bool labels = GUILayout.Toggle(_settings.ShowWorldLabels,
@@ -297,15 +455,62 @@ namespace TapeMeasure
             }
         }
 
-        private void DrawSettingsPanel()
+        private void DrawSettingsPanel(float availableHeight)
         {
             GUILayout.BeginVertical(GUI.skin.box);
 
-            bool changed = false;
-            GUILayout.Label("Measurement behavior", _statusStyle);
+            string[] tabs = new string[]
+            {
+                "Snapping",
+                "Interface",
+                "Display",
+                "Markers",
+                "Keyboard"
+            };
 
-            GUILayout.Label("Snapping", _statusStyle);
-            changed |= DrawSnappingOptions();
+            int nextTab = GUILayout.Toolbar(_settingsTab, tabs, GUILayout.Height(28f));
+            if (nextTab != _settingsTab)
+            {
+                _settingsTab = nextTab;
+                _settingsScroll = Vector2.zero;
+                _settingsWindowRect.height = 0f;
+            }
+
+            GUILayout.Space(8f);
+
+            bool changed = false;
+            switch (_settingsTab)
+            {
+                case 0:
+                    changed |= DrawSettingsSnappingTab();
+                    break;
+                case 1:
+                    changed |= DrawSettingsInterfaceTab();
+                    break;
+                case 2:
+                    changed |= DrawSettingsDisplayTab();
+                    break;
+                case 3:
+                    changed |= DrawSettingsMarkerAppearanceTab();
+                    break;
+                case 4:
+                    DrawKeyboardShortcutSettings(Mathf.Max(150f, availableHeight - 120f - (28f * 1.5f)));
+                    break;
+            }
+
+            if (changed) MarkSettingsDirty();
+            GUILayout.EndVertical();
+        }
+
+        private bool DrawSettingsSnappingTab()
+        {
+            bool changed = false;
+            GUILayout.Label("Snapping settings", _statusStyle);
+            GUILayout.Space(8f);
+            changed |= DrawSnappingOptions(_settingsWindowRect.width, false);
+
+            GUILayout.Space(7f);
+            GUILayout.Label("Measurement behavior", _statusStyle);
 
             bool sym = GUILayout.Toggle(_settings.SymmetryAwareMeasurements,
                 "Create symmetry counterpart measurements");
@@ -327,8 +532,14 @@ namespace TapeMeasure
                 changed = true;
             }
 
-            GUILayout.Space(7f);
-            GUILayout.Label("Interface", _statusStyle);
+            return changed;
+        }
+
+        private bool DrawSettingsInterfaceTab()
+        {
+            bool changed = false;
+            GUILayout.Label("Interface settings", _statusStyle);
+            GUILayout.Space(8f);
 
             bool alternateSkin = GUILayout.Toggle(_settings.UseAlternateSkin,
                 "Use alternate KSP skin");
@@ -343,36 +554,12 @@ namespace TapeMeasure
                 _tableHeaderStyle = null;
                 _selectedNameStyle = null;
                 _worldLabelStyle = null;
+                _guideLabelStyle = null;
                 _valueButtonStyle = null;
                 _deleteButtonStyle = null;
             }
 
-            bool snappingPane = GUILayout.Toggle(_settings.ShowSnappingPane,
-                "Expand snapping pane");
-            if (snappingPane != _settings.ShowSnappingPane)
-            {
-                _settings.ShowSnappingPane = snappingPane;
-                RequestMainWindowResize();
-                changed = true;
-            }
-
-            bool dimensionsPane = GUILayout.Toggle(_settings.ShowVesselDimensionsPane,
-                "Expand automatic vessel dimensions pane");
-            if (dimensionsPane != _settings.ShowVesselDimensionsPane)
-            {
-                _settings.ShowVesselDimensionsPane = dimensionsPane;
-                RequestMainWindowResize();
-                changed = true;
-            }
-
-            bool listPane = GUILayout.Toggle(_settings.ShowMeasurementListPane,
-                "Expand measurement list pane");
-            if (listPane != _settings.ShowMeasurementListPane)
-            {
-                _settings.ShowMeasurementListPane = listPane;
-                RequestMainWindowResize();
-                changed = true;
-            }
+            GUILayout.Space(12f);
 
             bool selectedPane = GUILayout.Toggle(_settings.SelectedMeasurementPaneExpanded,
                 "Expand Selected Measurement pane when a measurement is selected");
@@ -383,10 +570,35 @@ namespace TapeMeasure
                 changed = true;
             }
 
-            GUILayout.Label("Pane headings remain visible when collapsed. The Selected Measurement pane itself appears only after an explicit row selection.");
+            bool hideWhileMeasuring = GUILayout.Toggle(_settings.HideWindowWhileMeasuring,
+                "Hide main window while measurement mode is active");
+            if (hideWhileMeasuring != _settings.HideWindowWhileMeasuring)
+            {
+                _settings.HideWindowWhileMeasuring = hideWhileMeasuring;
+                changed = true;
+            }
 
-            GUILayout.Space(7f);
-            GUILayout.Label("Display", _statusStyle);
+            bool rememberIncomplete = GUILayout.Toggle(
+                _settings.RememberIncompleteMeasurementOnRestart,
+                "Remember unfinished points when Start Measuring is clicked again");
+            if (rememberIncomplete != _settings.RememberIncompleteMeasurementOnRestart)
+            {
+                _settings.RememberIncompleteMeasurementOnRestart = rememberIncomplete;
+                changed = true;
+            }
+
+            GUILayout.Label("Pane headings remain visible when collapsed. The Selected Measurement pane itself appears only after an explicit row selection.");
+            GUILayout.Space(5f);
+            GUILayout.Label("The Settings window always starts closed when entering the editor.");
+
+            return changed;
+        }
+
+        private bool DrawSettingsDisplayTab()
+        {
+            bool changed = false;
+            GUILayout.Label("Display settings", _statusStyle);
+            GUILayout.Space(8f);
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Units:", GUILayout.Width(130f));
@@ -398,6 +610,19 @@ namespace TapeMeasure
             if (units != (int)_settings.DistanceUnits)
             {
                 _settings.DistanceUnits = (DistanceUnitMode)units;
+                changed = true;
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Precision:", GUILayout.Width(130f));
+            int precision = GUILayout.Toolbar(
+                (int)_settings.DisplayPrecision,
+                new string[] { "Automatic", "1", "2", "3", "4" },
+                GUILayout.Width(390f));
+            GUILayout.EndHorizontal();
+            if (precision != (int)_settings.DisplayPrecision)
+            {
+                _settings.DisplayPrecision = (DisplayPrecisionMode)precision;
                 changed = true;
             }
 
@@ -427,11 +652,53 @@ namespace TapeMeasure
                 changed = true;
             }
             if (_settings.ShowMeasurementGuides)
+            {
                 GUILayout.Label("Guide colors: X = red, Y = green, Z = blue. Guides project from both endpoints.");
+                GUI.enabled = _settings.ShowWorldLabelValues;
+                bool guideLabels = GUILayout.Toggle(_settings.ShowGuideLabels,
+                    "Show X/Y/Z dimension values directly on guide lines");
+                GUI.enabled = true;
+                if (guideLabels != _settings.ShowGuideLabels)
+                {
+                    _settings.ShowGuideLabels = guideLabels;
+                    changed = true;
+                }
+                if (!_settings.ShowWorldLabelValues)
+                    GUILayout.Label("Guide value labels are hidden while measurement dimension values are disabled.");
+            }
 
-            GUILayout.Space(5f);
-            GUILayout.Label("Marker appearance", _statusStyle);
+            bool angleArcs = GUILayout.Toggle(_settings.ShowAngleArcs,
+                "Show angle arcs for angle measurements");
+            if (angleArcs != _settings.ShowAngleArcs)
+            {
+                _settings.ShowAngleArcs = angleArcs;
+                changed = true;
+            }
 
+            bool endCaps = GUILayout.Toggle(_settings.ShowDimensionEndCaps,
+                "Show CAD-style dimension end ticks");
+            if (endCaps != _settings.ShowDimensionEndCaps)
+            {
+                _settings.ShowDimensionEndCaps = endCaps;
+                changed = true;
+            }
+
+            bool boundingBox = GUILayout.Toggle(_settings.ShowBoundingBox,
+                "Show vessel bounding box in the editor view");
+            if (boundingBox != _settings.ShowBoundingBox)
+            {
+                _settings.ShowBoundingBox = boundingBox;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private bool DrawSettingsMarkerAppearanceTab()
+        {
+            bool changed = false;
+            GUILayout.Label("Marker Appearance", _statusStyle);
+            GUILayout.Space(20);
             changed |= DrawSlider("Marker size", ref _settings.MarkerSizeMultiplier, 0.25f, 4f, "F2", "x");
             changed |= DrawSlider("Line width", ref _settings.LineWidthMultiplier, 0.25f, 5f, "F2", "x");
 
@@ -450,17 +717,7 @@ namespace TapeMeasure
                 changed |= DrawSlider("Inactive opacity", ref _settings.InactiveOpacity, 0.10f, 1f, "F2", string.Empty);
             }
 
-            GUILayout.Space(7f);
-            GUILayout.Label("Keyboard shortcuts", _statusStyle);
-            GUILayout.Label("M - toggle measurement mode");
-            GUILayout.Label("Esc - exit measurement or endpoint-edit mode");
-            GUILayout.Label("Delete - delete the selected measurement");
-            GUILayout.Label("Ctrl+C - copy the selected measurement value");
-            GUILayout.Label("Ctrl+Z - undo the last TapeMeasure measurement change");
-            GUILayout.Label("Shift - temporarily enable the configured snap targets while held");
-
-            if (changed) MarkSettingsDirty();
-            GUILayout.EndVertical();
+            return changed;
         }
 
         private static bool DrawSlider(string label, ref float value, float min, float max, string format, string suffix)
@@ -552,45 +809,113 @@ namespace TapeMeasure
                 return;
             }
 
-            bool changed = DrawSnappingOptions();
+            bool changed = DrawSnappingOptions(_windowRect.width, true);
             if (changed)
                 MarkSettingsDirty();
 
             GUILayout.EndVertical();
         }
 
-        private bool DrawSnappingOptions()
+        void CheckColumn(ref int column, int snapColumns)
+        {
+        }
+        private bool DrawSnappingOptions(float containingWindowWidth, bool mainWindow)
         {
             bool changed = false;
 
+            string snapKeyText = _settings.ShortcutSnapModifier != null ? _settings.ShortcutSnapModifier.ToString() : "Unbound";
             bool snapping = GUILayout.Toggle(_settings.SnappingEnabled,
-                "Enable snapping (Shift temporarily enables the configured targets)");
+                "Enable snapping (" + snapKeyText + " temporarily enables the configured targets)");
             if (snapping != _settings.SnappingEnabled)
             {
                 _settings.SnappingEnabled = snapping;
                 changed = true;
                 SetStatus(snapping ? "Snapping enabled." :
-                    "Snapping disabled. Hold Shift for temporary snapping.", 4f);
+                    "Snapping disabled. Hold " + snapKeyText + " for temporary snapping.", 4f);
             }
 
+            // Use three columns only when the window containing these controls
+            // is wider than 780 pixels. Otherwise keep the compact two-column
+            // layout. The main window can be horizontally resized, so this is
+            // evaluated every GUI pass and changes immediately at the threshold.
+            int snapColumns = containingWindowWidth > 780f ? 3 : 2;
+
+            // A column-count change changes the number of rows in this pane.
+            // Reset the containing window height immediately so GUILayout can
+            // recompute the correct size instead of retaining the previous one.
+            int previousColumns = mainWindow ? _lastMainSnapColumns : _lastSettingsSnapColumns;
+            if (previousColumns > 0 && previousColumns != snapColumns)
+            {
+                if (mainWindow)
+                    RequestMainWindowResize();
+                else
+                    _settingsWindowRect.height = 0f;
+            }
+            if (mainWindow)
+                _lastMainSnapColumns = snapColumns;
+            else
+                _lastSettingsSnapColumns = snapColumns;
+
+            // The threshold is based on the real containing-window width.
+            // Account for normal window/box padding only when calculating the
+            // width of each toggle; do not let padding affect the 780px test.
+            float horizontalPadding = 54f;
+            float snapColumnWidth = Mathf.Max(150f,
+                (containingWindowWidth - horizontalPadding) / snapColumns);
+
             GUILayout.Label("Snap targets (nearest enabled target within the snap radius wins):");
+
             GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapPartOrigin, "Part origin", GUILayout.Width(260f));
-            changed |= DrawToggle(ref _settings.SnapAttachmentNodes, "Attachment node", GUILayout.Width(260f));
+            int column = 0;
+            for (int i = 0; i < 10; i++)
+            {
+
+                switch (i)
+                {
+                    case 0:
+                        changed |= DrawToggle(ref _settings.SnapPartOrigin, "Part origin", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 1:
+                        changed |= DrawToggle(ref _settings.SnapAttachmentNodes, "Attachment node", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 2:
+                        changed |= DrawToggle(ref _settings.SnapSurfaceAttachmentPoint, "Surface attachment point", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 3:
+                        changed |= DrawToggle(ref _settings.SnapPartCenter, "Part center", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 4:
+                        changed |= DrawToggle(ref _settings.SnapVesselRoot, "Vessel root", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 5:
+                        changed |= DrawToggle(ref _settings.SnapCenterOfMass, "Center of Mass", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 6:
+                        changed |= DrawToggle(ref _settings.SnapCenterOfLift, "Center of Lift", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 7:
+                        changed |= DrawToggle(ref _settings.SnapCenterOfThrust, "Center of Thrust", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 8:
+                        changed |= DrawToggle(ref _settings.SnapVesselAxisGrid, "Vessel Axis / Grid snapping", GUILayout.Width(snapColumnWidth));
+                        break;
+                    case 9:
+                        changed |= DrawToggle(ref _settings.SnapMeasurementPoints, "Existing TapeMeasure endpoints", GUILayout.Width(snapColumnWidth));
+                        break;
+
+                    default:
+                        break;
+                }
+                column++;
+                if (column >= snapColumns)
+                {
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    column = 0;
+                }
+            }
             GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapSurfaceAttachmentPoint, "Surface attachment point", GUILayout.Width(260f));
-            changed |= DrawToggle(ref _settings.SnapPartCenter, "Part center", GUILayout.Width(260f));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapVesselRoot, "Vessel root", GUILayout.Width(260f));
-            changed |= DrawToggle(ref _settings.SnapCenterOfMass, "Center of Mass", GUILayout.Width(260f));
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            changed |= DrawToggle(ref _settings.SnapCenterOfLift, "Center of Lift", GUILayout.Width(260f));
-            changed |= DrawToggle(ref _settings.SnapCenterOfThrust, "Center of Thrust", GUILayout.Width(260f));
-            GUILayout.EndHorizontal();
-            changed |= DrawToggle(ref _settings.SnapVesselAxisGrid, "Vessel Axis / Grid snapping");
+
 
             changed |= DrawSlider("Snap radius", ref _settings.SnapPixelRadius, 8f, 100f, "F0", " px");
             if (_settings.SnapVesselAxisGrid)
@@ -633,6 +958,13 @@ namespace TapeMeasure
             if (GUILayout.Button(boxText, _valueButtonStyle, GUILayout.Width(260f)))
                 CopyToClipboard(boxText, "Bounding box");
             GUILayout.EndHorizontal();
+            bool showBoundingBox = GUILayout.Toggle(_settings.ShowBoundingBox,
+                "Show bounding box in editor view");
+            if (showBoundingBox != _settings.ShowBoundingBox)
+            {
+                _settings.ShowBoundingBox = showBoundingBox;
+                MarkSettingsDirty();
+            }
             GUILayout.Label("Based on visible active-part geometry.");
             GUILayout.EndVertical();
         }
@@ -669,42 +1001,12 @@ namespace TapeMeasure
 
         private void DrawMeasurementListPanel()
         {
-            GUILayout.BeginVertical(GUI.skin.box);
-            string countText = _measurements.Count + (_measurements.Count == 1 ? " measurement" : " measurements");
-            if (!DrawPaneHeader("Measurement list", ref _settings.ShowMeasurementListPane, countText))
-            {
-                GUILayout.EndVertical();
-                return;
-            }
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Type", _tableHeaderStyle, GUILayout.Width(64f));
-            GUILayout.Label("Name", _tableHeaderStyle, GUILayout.Width(130f));
-            GUILayout.Space(4f);
-            GUILayout.Label("Lock", _tableHeaderStyle, GUILayout.Width(60f));
-            GUILayout.Label("Value", _tableHeaderStyle, GUILayout.Width(68f));
-            GUILayout.Label("X", _tableHeaderStyle, GUILayout.Width(54f));
-            GUILayout.Label("Y", _tableHeaderStyle, GUILayout.Width(54f));
-            GUILayout.Label("Z", _tableHeaderStyle, GUILayout.Width(54f));
-            GUILayout.Label(string.Empty, GUILayout.Width(24f));
-            GUILayout.EndHorizontal();
-
-            float height = Mathf.Clamp(_measurements.Count * 28f + 4f, 62f, 185f);
-            _measurementScroll = GUILayout.BeginScrollView(_measurementScroll, GUILayout.Height(height));
-            if (_measurements.Count == 0)
-                GUILayout.Label("No measurements. Click New Distance or New Angle.");
-            else
-            {
-                for (int i = 0; i < _measurements.Count; ++i)
-                    if (DrawMeasurementRow(_measurements[i])) break;
-            }
-            GUILayout.EndScrollView();
-            GUILayout.Label("Click anywhere in a row to select and highlight that measurement in the editor. Values are clickable and copy to the clipboard.");
-            GUILayout.EndVertical();
+            DrawEnhancedMeasurementListPanel();
         }
 
         private bool DrawMeasurementRow(MeasurementRecord m)
         {
+            const float visibilityWidth = 30f;
             const float typeWidth = 64f;
             const float nameWidth = 130f;
             const float lockWidth = 60f;
@@ -719,6 +1021,8 @@ namespace TapeMeasure
             // Calculate all cells before handling row selection so the delete X
             // can be excluded from the row-select hit area.
             float x = row.x;
+            Rect visibilityRect = new Rect(x, row.y, visibilityWidth, row.height);
+            x += visibilityWidth + gap;
             Rect typeRect = new Rect(x, row.y, typeWidth, row.height);
             x += typeWidth + gap;
             Rect nameRect = new Rect(x, row.y, nameWidth, row.height);
@@ -741,15 +1045,26 @@ namespace TapeMeasure
             if (Event.current.type == EventType.MouseDown &&
                 Event.current.button == 0 &&
                 row.Contains(Event.current.mousePosition) &&
+                !visibilityRect.Contains(Event.current.mousePosition) &&
                 !deleteRect.Contains(Event.current.mousePosition))
             {
                 SelectMeasurement(m);
             }
 
+            bool visible = GUI.Toggle(visibilityRect, m.Visible, string.Empty);
+            if (visible != m.Visible)
+            {
+                CommitPendingTextEdits();
+                PushMeasurementUndo(visible ? "Show measurement" : "Hide measurement");
+                m.Visible = visible;
+                MarkPersistenceDirty(true);
+                SetStatus(m.Name + (visible ? " shown in the editor." : " hidden in the editor."), 4f);
+            }
+
             GUI.Label(typeRect, m.Kind == MeasurementKind.Angle ? "Angle" : "Distance");
 
             GUIStyle nameStyle = m == _selectedMeasurement ? _selectedNameStyle : GUI.skin.button;
-            if (GUI.Button(nameRect, m.Name, nameStyle))
+            if (GUI.Button(nameRect, new GUIContent(GetMeasurementListDisplayName(m.Name), m.Name), nameStyle))
                 SelectMeasurement(m);
 
             GUI.Label(lockRect, m.LockMode == MeasurementLockMode.PartRelative ? "Part" : "Vessel");
@@ -791,10 +1106,14 @@ namespace TapeMeasure
         private void DrawSelectedMeasurementDetails()
         {
             _measurementNameFieldFocused = false;
+            _measurementNotesFieldFocused = false;
 
             if (_nameEditUndoState != null &&
                 (_selectedMeasurement == null || _selectedMeasurement.Id != _nameEditMeasurementId))
                 CommitPendingNameUndo();
+            if (_notesEditUndoState != null &&
+                (_selectedMeasurement == null || _selectedMeasurement.Id != _notesEditMeasurementId))
+                CommitPendingNotesUndo();
 
             if (_selectedMeasurement == null) return;
 
@@ -832,7 +1151,7 @@ namespace TapeMeasure
 
             if (!_settings.SelectedMeasurementPaneExpanded)
             {
-                CommitPendingNameUndo();
+                CommitPendingTextEdits();
                 GUILayout.EndVertical();
                 return;
             }
@@ -840,6 +1159,19 @@ namespace TapeMeasure
             GUILayout.BeginHorizontal();
             GUILayout.Label("Type:", GUILayout.Width(70f));
             GUILayout.Label(_selectedMeasurement.Kind == MeasurementKind.Angle ? "Angle (A-B-C, B is vertex)" : "Distance");
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Visible:", GUILayout.Width(70f));
+            bool selectedVisible = GUILayout.Toggle(_selectedMeasurement.Visible,
+                "Show this measurement in the editor");
+            if (selectedVisible != _selectedMeasurement.Visible)
+            {
+                CommitPendingTextEdits();
+                PushMeasurementUndo(selectedVisible ? "Show measurement" : "Hide measurement");
+                _selectedMeasurement.Visible = selectedVisible;
+                MarkPersistenceDirty(true);
+            }
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
@@ -851,6 +1183,7 @@ namespace TapeMeasure
             {
                 if (_nameEditUndoState == null || _nameEditMeasurementId != _selectedMeasurement.Id)
                 {
+                    CommitPendingNotesUndo();
                     CommitPendingNameUndo();
                     _nameEditUndoState = CaptureMeasurementUndoState();
                     _nameEditMeasurementId = _selectedMeasurement.Id;
@@ -864,13 +1197,36 @@ namespace TapeMeasure
             if (!_measurementNameFieldFocused)
                 CommitPendingNameUndo();
 
+            DrawSelectedGroupAndColor();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Notes:", GUILayout.Width(70f));
+            GUI.SetNextControlName(MeasurementNotesControlName);
+            string newNotes = GUILayout.TextArea(_selectedMeasurement.Notes ?? string.Empty,
+                GUILayout.Width(430f), GUILayout.MinHeight(48f), GUILayout.MaxHeight(90f));
+            _measurementNotesFieldFocused = GUI.GetNameOfFocusedControl() == MeasurementNotesControlName;
+            if (newNotes != (_selectedMeasurement.Notes ?? string.Empty))
+            {
+                if (_notesEditUndoState == null || _notesEditMeasurementId != _selectedMeasurement.Id)
+                {
+                    CommitPendingNotesUndo();
+                    _notesEditUndoState = CaptureMeasurementUndoState();
+                    _notesEditMeasurementId = _selectedMeasurement.Id;
+                }
+                _selectedMeasurement.Notes = newNotes;
+                MarkPersistenceDirty();
+            }
+            GUILayout.EndHorizontal();
+            if (!_measurementNotesFieldFocused)
+                CommitPendingNotesUndo();
+
             GUILayout.BeginHorizontal();
             GUILayout.Label("Lock:", GUILayout.Width(70f));
             int lockMode = GUILayout.Toolbar((int)_selectedMeasurement.LockMode,
                 new string[] { "Part-relative", "Vessel-relative" }, GUILayout.Width(260f));
             if (lockMode != (int)_selectedMeasurement.LockMode)
             {
-                CommitPendingNameUndo();
+                CommitPendingTextEdits();
                 PushMeasurementUndo("Change lock mode");
                 _selectedMeasurement.SetLockMode((MeasurementLockMode)lockMode, _currentShip);
                 MarkPersistenceDirty(true);
@@ -950,8 +1306,15 @@ namespace TapeMeasure
             string undoLabel = _measurementUndo.CanUndo
                 ? "Undo (" + _measurementUndo.Count + ")"
                 : "Undo";
-            if (GUILayout.Button(undoLabel, GUILayout.Width(95f)))
+            if (GUILayout.Button(undoLabel, GUILayout.Width(82f)))
                 UndoLastMeasurementChange();
+
+            GUI.enabled = _measurementUndo.CanRedo;
+            string redoLabel = _measurementUndo.CanRedo
+                ? "Redo (" + _measurementUndo.RedoCount + ")"
+                : "Redo";
+            if (GUILayout.Button(redoLabel, GUILayout.Width(82f)))
+                RedoLastMeasurementChange();
 
             GUI.enabled = _selectedMeasurement != null;
             if (GUILayout.Button("Delete Selected")) DeleteMeasurement(_selectedMeasurement);
@@ -961,12 +1324,14 @@ namespace TapeMeasure
             if (GUILayout.Button("Export CSV")) ExportMeasurementsCsv();
             if (GUILayout.Button("Clear All"))
             {
-                CommitPendingNameUndo();
+                CommitPendingTextEdits();
                 PushMeasurementUndo("Clear all measurements");
                 SetEndpointEditMode(false);
                 _measurements.Clear();
                 _selectedMeasurement = null;
                 _activeMeasurement = null;
+                _groupEditMeasurementId = null;
+                RequestMainWindowResize();
                 MarkPersistenceDirty(true);
                 SetStatus("All measurements cleared. Use Undo to restore them.", 5f);
             }
@@ -1019,7 +1384,7 @@ namespace TapeMeasure
             for (int i = 0; i < _measurements.Count; ++i)
             {
                 MeasurementRecord m = _measurements[i];
-                if (m == null || !m.IsComplete) continue;
+                if (m == null || !m.Visible || !m.IsComplete) continue;
                 Vector3 screen = camera.WorldToScreenPoint(m.LabelPosition);
                 if (screen.z <= 0f) continue;
                 string text = _settings.ShowWorldLabelValues
@@ -1028,8 +1393,79 @@ namespace TapeMeasure
                 Vector2 size = _worldLabelStyle.CalcSize(new GUIContent(text));
                 float x = screen.x - size.x * 0.5f;
                 float y = Screen.height - screen.y - size.y * 0.5f;
-                GUI.Box(new Rect(x - 8f, y - 4f, size.x + 16f, size.y + 8f), text, _worldLabelStyle);
+                Rect rect = new Rect(x - 8f, y - 4f, size.x + 16f, size.y + 8f);
+                GUI.Box(rect, text, _worldLabelStyle);
+
+                // World labels are selectable measurement graphics. Do not
+                // change selection while placing points or dragging endpoints.
+                if (!_measurementMode && !_endpointEditMode &&
+                    Event.current.type == EventType.MouseDown &&
+                    Event.current.button == 0 &&
+                    rect.Contains(Event.current.mousePosition) &&
+                    !IsPointerOverGui(Event.current.mousePosition))
+                {
+                    SelectMeasurement(m);
+                    SetStatus(m.Name + " selected from its editor label.", 4f);
+                    Event.current.Use();
+                }
             }
+        }
+
+        private void DrawGuideLabels()
+        {
+            if (_settings == null ||
+                !_settings.ShowMeasurementGuides ||
+                !_settings.ShowGuideLabels ||
+                !_settings.ShowWorldLabelValues)
+                return;
+
+            MeasurementRecord m = _selectedMeasurement;
+            if (m == null || !m.Visible || !m.IsComplete || m.Kind != MeasurementKind.Distance)
+                return;
+
+            Camera camera = GetEditorCamera();
+            if (camera == null) return;
+
+            Quaternion rotation = EditorLogic.VesselRotation;
+            Vector3 delta = m.AxisDelta(rotation);
+            Vector3 a = m.GetWorldPosition(m.PointA);
+
+            DrawGuideValueLabel(camera, a, rotation * Vector3.right * delta.x,
+                "X " + FormatDistance(Mathf.Abs(delta.x)), new Color(1.00f, 0.25f, 0.20f, 1f));
+            DrawGuideValueLabel(camera, a, rotation * Vector3.up * delta.y,
+                "Y " + FormatDistance(Mathf.Abs(delta.y)), new Color(0.25f, 1.00f, 0.30f, 1f));
+            DrawGuideValueLabel(camera, a, rotation * Vector3.forward * delta.z,
+                "Z " + FormatDistance(Mathf.Abs(delta.z)), new Color(0.25f, 0.55f, 1.00f, 1f));
+        }
+
+        private void DrawGuideValueLabel(
+            Camera camera,
+            Vector3 start,
+            Vector3 component,
+            string text,
+            Color textColor)
+        {
+            // Avoid stacking three labels on top of one another for dimensions
+            // whose component is effectively zero.
+            if (component.sqrMagnitude < 1e-8f) return;
+
+            Vector3 world = start + component * 0.5f;
+            Vector3 screen = camera.WorldToScreenPoint(world);
+            if (screen.z <= 0f) return;
+
+            GUIStyle style = new GUIStyle(_guideLabelStyle);
+            style.normal.textColor = textColor;
+            style.hover.textColor = textColor;
+            style.active.textColor = textColor;
+            style.focused.textColor = textColor;
+
+            Vector2 size = style.CalcSize(new GUIContent(text));
+            Rect rect = new Rect(
+                screen.x - size.x * 0.5f - 5f,
+                Screen.height - screen.y - size.y * 0.5f - 2f,
+                size.x + 10f,
+                size.y + 4f);
+            GUI.Box(rect, text, style);
         }
 
         private void BeginEndpointDrag()
@@ -1058,7 +1494,7 @@ namespace TapeMeasure
             _dragSnapDescription = null;
             _dragPartTitle = null;
             _dragMoved = false;
-            CommitPendingNameUndo();
+            CommitPendingTextEdits();
             _dragUndoState = CaptureMeasurementUndoState();
             SetStatus("Dragging " + GetEndpointLabel(endpoint, _selectedMeasurement) +
                 ". Release the mouse button to place it.", 5f);
@@ -1289,6 +1725,8 @@ namespace TapeMeasure
                     _settings,
                     hasAxisAnchor,
                     axisAnchor,
+                    _measurements,
+                    GetSnapExcludeMeasurementId(),
                     out snap))
                 {
                     nearestPart = snap.ReferencePart ?? nearestPart;
@@ -1298,11 +1736,23 @@ namespace TapeMeasure
                     selectedPoint = snap.WorldPosition;
                     snapNodeId = snap.NodeId;
                     _activeSnapDescription = snap.Label;
+                    string axisDescription;
+                    if (ApplyAxisConstraintIfHeld(ref selectedPoint, out axisDescription))
+                        _activeSnapDescription = string.IsNullOrEmpty(_activeSnapDescription)
+                            ? axisDescription
+                            : _activeSnapDescription + " + " + axisDescription;
                     return nearestPart != null;
                 }
             }
 
-            return hasRawWorldPoint && nearestPart != null;
+            if (hasRawWorldPoint && nearestPart != null)
+            {
+                string axisDescription;
+                if (ApplyAxisConstraintIfHeld(ref selectedPoint, out axisDescription))
+                    _activeSnapDescription = axisDescription;
+                return true;
+            }
+            return false;
         }
 
         private static bool TryGetVisiblePartSurfacePoint(
@@ -1455,6 +1905,20 @@ namespace TapeMeasure
             return t >= 0f;
         }
 
+        private string GetSnapExcludeMeasurementId()
+        {
+            if (_endpointEditMode)
+                return _selectedMeasurement != null ? _selectedMeasurement.Id : null;
+
+            // While placing a measurement, exclude its own already-placed
+            // endpoints so the cursor does not immediately snap back to A/B.
+            // Once that measurement is complete it becomes a valid target for
+            // the next measurement.
+            return _activeMeasurement != null && !_activeMeasurement.IsComplete
+                ? _activeMeasurement.Id
+                : null;
+        }
+
         private void TryGetSnapAxisAnchor(out bool hasAnchor, out Vector3 anchor)
         {
             hasAnchor = false;
@@ -1519,7 +1983,7 @@ namespace TapeMeasure
             string snapDescription = _activeSnapDescription;
             bool snapped = !string.IsNullOrEmpty(snapDescription);
 
-            CommitPendingNameUndo();
+            CommitPendingTextEdits();
             PushMeasurementUndo("Place measurement point");
 
             if (_activeMeasurement == null || _activeMeasurement.IsComplete)
@@ -1609,7 +2073,8 @@ namespace TapeMeasure
                 string name = GetUniqueMeasurementName(source.Name + " [Sym " + (shift + 1) + "]");
                 MeasurementRecord clone = new MeasurementRecord(
                     Guid.NewGuid().ToString("N"), name, source.Kind, source.LockMode,
-                    copies[0], copies[1], source.Kind == MeasurementKind.Angle ? copies[2] : null);
+                    copies[0], copies[1], source.Kind == MeasurementKind.Angle ? copies[2] : null,
+                    source.Visible, source.Group, source.DisplayColor, source.Notes);
                 _measurements.Add(clone);
                 created++;
             }
@@ -1629,7 +2094,7 @@ namespace TapeMeasure
                     if (p != null && !group.Contains(p)) group.Add(p);
                 }
             }
-            group.Sort(delegate(Part a, Part b) { return a.craftID.CompareTo(b.craftID); });
+            group.Sort(delegate (Part a, Part b) { return a.craftID.CompareTo(b.craftID); });
             return group;
         }
 
@@ -1653,13 +2118,14 @@ namespace TapeMeasure
         {
             if (recordUndo)
             {
-                CommitPendingNameUndo();
+                CommitPendingTextEdits();
                 PushMeasurementUndo(kind == MeasurementKind.Angle
                     ? "Create angle measurement"
                     : "Create distance measurement");
             }
 
             MeasurementRecord m = new MeasurementRecord(kind, GetNextMeasurementName(kind), _settings.DefaultLockMode);
+            m.DisplayColor = GetNextMeasurementColor();
             _measurements.Add(m);
             return m;
         }
@@ -1669,7 +2135,7 @@ namespace TapeMeasure
             if (measurement == null) return;
 
             if (_selectedMeasurement != measurement)
-                CommitPendingNameUndo();
+                CommitPendingTextEdits();
 
             bool changed = measurement != _selectedMeasurement;
             _selectedMeasurement = measurement;
@@ -1687,13 +2153,15 @@ namespace TapeMeasure
         {
             if (_selectedMeasurement == null) return;
 
-            CommitPendingNameUndo();
+            CommitPendingTextEdits();
             if (_endpointEditMode)
                 SetEndpointEditMode(false);
 
             string name = _selectedMeasurement.Name;
             _selectedMeasurement = null;
             _measurementNameFieldFocused = false;
+            _groupFieldFocused = false;
+            _groupEditMeasurementId = null;
             RequestMainWindowResize();
             SetStatus(name + " is no longer selected. The measurement was not deleted.", 5f);
         }
@@ -1701,7 +2169,7 @@ namespace TapeMeasure
         private void DeleteMeasurement(MeasurementRecord measurement)
         {
             if (measurement == null) return;
-            CommitPendingNameUndo();
+            CommitPendingTextEdits();
             PushMeasurementUndo("Delete " + measurement.Name);
             bool wasSelected = measurement == _selectedMeasurement;
             string name = measurement.Name;
@@ -1768,6 +2236,8 @@ namespace TapeMeasure
             _measurementUndo.Clear();
             _nameEditUndoState = null;
             _nameEditMeasurementId = null;
+            _notesEditUndoState = null;
+            _notesEditMeasurementId = null;
             _dragUndoState = null;
             _measurements.Clear();
             _selectedMeasurement = null;
@@ -1807,16 +2277,58 @@ namespace TapeMeasure
             _nameEditMeasurementId = null;
         }
 
-        private void UndoLastMeasurementChange()
+        private void CommitPendingNotesUndo()
+        {
+            if (_notesEditUndoState == null)
+                return;
+
+            _measurementUndo.Push(_notesEditUndoState, "Edit measurement notes");
+            _notesEditUndoState = null;
+            _notesEditMeasurementId = null;
+        }
+
+        private void CommitPendingTextEdits()
         {
             CommitPendingNameUndo();
+            CommitPendingNotesUndo();
+        }
 
+        private void UndoLastMeasurementChange()
+        {
+            CommitPendingTextEdits();
+
+            MeasurementUndoState currentState = CaptureMeasurementUndoState();
             MeasurementUndoEntry entry;
-            if (!_measurementUndo.TryPop(out entry))
+            if (!_measurementUndo.TryUndo(currentState, out entry))
             {
                 SetStatus("Nothing to undo in TapeMeasure.", 3f);
                 return;
             }
+
+            RestoreMeasurementHistoryEntry(entry, "Undo");
+        }
+
+        private void RedoLastMeasurementChange()
+        {
+            CommitPendingTextEdits();
+
+            MeasurementUndoState currentState = CaptureMeasurementUndoState();
+            MeasurementUndoEntry entry;
+            if (!_measurementUndo.TryRedo(currentState, out entry))
+            {
+                SetStatus("Nothing to redo in TapeMeasure.", 3f);
+                return;
+            }
+
+            RestoreMeasurementHistoryEntry(entry, "Redo");
+        }
+
+        private void RestoreMeasurementHistoryEntry(
+            MeasurementUndoEntry entry,
+            string action)
+        {
+            if (entry == null || entry.State == null)
+                return;
 
             if (_endpointEditMode)
                 SetEndpointEditMode(false);
@@ -1824,6 +2336,9 @@ namespace TapeMeasure
             _dragEndpoint = MeasurementEndpoint.None;
             _dragMoved = false;
             _dragUndoState = null;
+            _notesEditUndoState = null;
+            _notesEditMeasurementId = null;
+            _measurementNotesFieldFocused = false;
 
             int unresolvedPointCount;
             List<MeasurementRecord> restored = entry.State.Restore(
@@ -1835,6 +2350,10 @@ namespace TapeMeasure
 
             _activeMeasurement = null;
             _selectedMeasurement = null;
+            _groupEditMeasurementId = null;
+            _groupFieldFocused = false;
+            _hoveredListMeasurementId = null;
+            _hoveredEditorMeasurementId = null;
             string selectedId = entry.State.SelectedMeasurementId;
             if (!string.IsNullOrEmpty(selectedId))
             {
@@ -1857,7 +2376,7 @@ namespace TapeMeasure
                     " not be restored because the referenced Part no longer exists."
                 : string.Empty;
 
-            SetStatus("Undo: " + entry.Description + "." + unresolvedText, 6f);
+            SetStatus(action + ": " + entry.Description + "." + unresolvedText, 6f);
         }
 
         private void MarkPersistenceDirty(bool saveImmediately = false)
@@ -1888,11 +2407,11 @@ namespace TapeMeasure
             if (_settings == null) return;
             _settings.WindowX = _windowRect.x;
             _settings.WindowY = _windowRect.y;
+            _settings.WindowWidth = _mainWindowWidth;
             _settings.HasWindowPosition = true;
             _settings.SettingsWindowX = _settingsWindowRect.x;
             _settings.SettingsWindowY = _settingsWindowRect.y;
             _settings.HasSettingsWindowPosition = true;
-            _settings.ShowSettingsPanel = _showSettings;
         }
 
         private void TrackWindowPosition()
@@ -1902,10 +2421,12 @@ namespace TapeMeasure
 
             if (!_settings.HasWindowPosition ||
                 Mathf.Abs(_settings.WindowX - _windowRect.x) > 0.5f ||
-                Mathf.Abs(_settings.WindowY - _windowRect.y) > 0.5f)
+                Mathf.Abs(_settings.WindowY - _windowRect.y) > 0.5f ||
+                Mathf.Abs(_settings.WindowWidth - _mainWindowWidth) > 0.5f)
             {
                 _settings.WindowX = _windowRect.x;
                 _settings.WindowY = _windowRect.y;
+                _settings.WindowWidth = _mainWindowWidth;
                 _settings.HasWindowPosition = true;
                 MarkSettingsDirty();
             }
@@ -1929,7 +2450,14 @@ namespace TapeMeasure
 
         private void ClampWindowsToScreen()
         {
-            float mainWidth = _windowRect.width > 1f ? _windowRect.width : 600f;
+            float maxMainWidth = Mathf.Max(320f, Screen.width - 8f);
+            float minMainWidth = Mathf.Min(MainWindowMinWidth, maxMainWidth);
+            _mainWindowWidth = Mathf.Clamp(
+                _mainWindowWidth > 1f ? _mainWindowWidth : MainWindowDefaultWidth,
+                minMainWidth,
+                maxMainWidth);
+            _windowRect.width = _mainWindowWidth;
+            float mainWidth = _mainWindowWidth;
             float settingsWidth = _settingsWindowRect.width > 1f ? _settingsWindowRect.width : 560f;
             float maxY = Mathf.Max(0f, Screen.height - 30f);
             _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Mathf.Max(0f, Screen.width - mainWidth));
@@ -1984,6 +2512,17 @@ namespace TapeMeasure
             return false;
         }
 
+        private static string FormatFeetInches(float meters, int decimals)
+        {
+            double totalInches = Math.Abs(meters) * 39.37007874015748;
+            int feet = (int)Math.Floor(totalInches / 12.0);
+            double inches = totalInches - (feet * 12.0);
+            string sign = meters < 0f ? "-" : string.Empty;
+            return sign + feet.ToString(CultureInfo.InvariantCulture) + " ft " +
+                   inches.ToString("F" + Mathf.Clamp(decimals, 1, 4).ToString(CultureInfo.InvariantCulture),
+                       CultureInfo.InvariantCulture) + " in";
+        }
+
         private static string NormalizeMeasurementName(string name)
         {
             return string.IsNullOrEmpty(name) ? "Measurement" : name.Replace('\r', ' ').Replace('\n', ' ');
@@ -1992,7 +2531,10 @@ namespace TapeMeasure
         private void UpdateMeasurementPreview(Camera camera)
         {
             if (_renderer == null)
+            {
+                _previewDistanceVisible = false;
                 return;
+            }
 
             bool visible = false;
             Vector3 start = Vector3.zero;
@@ -2025,6 +2567,50 @@ namespace TapeMeasure
             }
 
             _renderer.UpdatePreview(camera, visible, start, end, _settings);
+
+            _previewDistanceVisible =
+                visible &&
+                _activeMeasurement != null &&
+                _activeMeasurement.Kind == MeasurementKind.Distance &&
+                _activeMeasurement.HasPointA &&
+                !_activeMeasurement.HasPointB;
+
+            if (_previewDistanceVisible)
+            {
+                _previewDistanceStart = start;
+                _previewDistanceEnd = end;
+            }
+        }
+
+        private void DrawPreviewDistanceLabel()
+        {
+            if (!_previewDistanceVisible || !_measurementMode)
+                return;
+
+            Camera camera = GetEditorCamera();
+            if (camera == null)
+                return;
+
+            Vector3 midpoint = (_previewDistanceStart + _previewDistanceEnd) * 0.5f;
+            Vector3 screen = camera.WorldToScreenPoint(midpoint);
+            if (screen.z <= 0f)
+                return;
+
+            string value = FormatDistance(
+                Vector3.Distance(_previewDistanceStart, _previewDistanceEnd));
+
+            GUIStyle style = new GUIStyle(_worldLabelStyle);
+            style.fontStyle = FontStyle.Bold;
+            style.alignment = TextAnchor.MiddleCenter;
+
+            Vector2 size = style.CalcSize(new GUIContent(value));
+            Rect rect = new Rect(
+                screen.x - size.x * 0.5f - 8f,
+                Screen.height - screen.y - size.y * 0.5f - 18f,
+                size.x + 16f,
+                size.y + 8f);
+
+            GUI.Box(rect, value, style);
         }
 
         private bool TryGetPreviewPoint(Camera camera, Vector3 start, out Vector3 end)
@@ -2047,11 +2633,15 @@ namespace TapeMeasure
             if (plane.Raycast(ray, out enter) && enter >= 0f)
             {
                 end = ray.GetPoint(enter);
+                string axisDescription;
+                ApplyAxisConstraintIfHeld(ref end, out axisDescription);
                 return true;
             }
 
             float depth = Vector3.Distance(camera.transform.position, start);
             end = ray.GetPoint(Mathf.Max(0.1f, depth));
+            string fallbackAxisDescription;
+            ApplyAxisConstraintIfHeld(ref end, out fallbackAxisDescription);
             return true;
         }
 
@@ -2090,7 +2680,7 @@ namespace TapeMeasure
         private string BuildMeasurementsCsv()
         {
             StringBuilder csv = new StringBuilder();
-            csv.AppendLine("Type,Name,Lock,Value,Distance_m,Angle_deg,X_m,Y_m,Z_m,Point_A,Point_B,Point_C");
+            csv.AppendLine("Type,Name,Group,Notes,Color,Visible,Lock,Value,Distance_m,Angle_deg,X_m,Y_m,Z_m,Point_A,Point_B,Point_C");
 
             for (int i = 0; i < _measurements.Count; ++i)
             {
@@ -2122,6 +2712,10 @@ namespace TapeMeasure
                 AppendCsvRow(csv,
                     m.Kind == MeasurementKind.Angle ? "Angle" : "Distance",
                     m.Name,
+                    GetDisplayGroupName(m),
+                    m.Notes ?? string.Empty,
+                    ColorToCsvHex(m.DisplayColor),
+                    m.Visible ? "Yes" : "No",
                     m.LockMode == MeasurementLockMode.PartRelative ? "Part-relative" : "Vessel-relative",
                     FormatMeasurementValue(m),
                     distance,
@@ -2135,6 +2729,14 @@ namespace TapeMeasure
             }
 
             return csv.ToString();
+        }
+
+        private static string ColorToCsvHex(Color color)
+        {
+            Color32 c = color;
+            return "#" + c.r.ToString("X2", CultureInfo.InvariantCulture) +
+                         c.g.ToString("X2", CultureInfo.InvariantCulture) +
+                         c.b.ToString("X2", CultureInfo.InvariantCulture);
         }
 
         private static void AppendCsvRow(StringBuilder csv, params string[] values)
@@ -2174,9 +2776,11 @@ namespace TapeMeasure
 
         private void HandleKeyboardShortcuts()
         {
-            // Keep editor-wide shortcuts inactive while the TapeMeasure window is
-            // hidden. Escape remains available whenever one of TapeMeasure's
-            // interaction modes is active.
+            if (_settings == null) return;
+
+            // Esc is always a hard-wired way out of measuring/editing.  Keep
+            // this check ahead of shortcut-capture handling so the hidden-window
+            // reminder can never advertise an Escape key that fails to exit.
             if ((_measurementMode || _endpointEditMode) && Input.GetKeyDown(KeyCode.Escape))
             {
                 SetMeasurementMode(false);
@@ -2185,10 +2789,22 @@ namespace TapeMeasure
                 return;
             }
 
-            if (!_windowVisible || IsTextEntryActive())
-                return;
+            if (_capturingShortcut != ShortcutAction.None) return;
 
-            if (Input.GetKeyDown(KeyCode.M))
+            // A configurable Cancel binding can provide an additional exit key.
+            if ((_measurementMode || _endpointEditMode) &&
+                _settings.ShortcutCancelMode != null &&
+                _settings.ShortcutCancelMode.MatchesKeyDown())
+            {
+                SetMeasurementMode(false);
+                SetEndpointEditMode(false);
+                SetStatus("Measurement/edit mode exited.", 3f);
+                return;
+            }
+
+            if (!_windowVisible || IsTextEntryActive()) return;
+
+            if (_settings.ShortcutToggleMeasurement != null && _settings.ShortcutToggleMeasurement.MatchesKeyDown())
             {
                 if (_measurementMode)
                 {
@@ -2197,48 +2813,75 @@ namespace TapeMeasure
                 }
                 else
                 {
-                    if (_endpointEditMode)
-                        SetEndpointEditMode(false);
-
-                    // Enter measurement mode without changing list selection.
-                    // A new distance record is created on the first click if
-                    // there is no unfinished active measurement.
-                    SetMeasurementMode(true);
-                    SetStatus("Measurement mode on. Click the vessel to place the next point.", 4f);
+                    if (_endpointEditMode) SetEndpointEditMode(false);
+                    StartMeasurementModeFromControl();
+                    if (_measurementMode)
+                        SetStatus("Measurement mode on. Click the vessel to place the next point.", 4f);
                 }
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.Delete))
+            if (_settings.ShortcutNewDistance != null && _settings.ShortcutNewDistance.MatchesKeyDown())
             {
-                if (_selectedMeasurement != null)
-                    DeleteMeasurement(_selectedMeasurement);
-                else
-                    SetStatus("No measurement is selected.", 3f);
+                _activeMeasurement = CreateMeasurement(MeasurementKind.Distance);
+                SetMeasurementMode(true);
                 return;
             }
 
-            bool controlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            if (controlHeld && Input.GetKeyDown(KeyCode.Z))
+            if (_settings.ShortcutNewAngle != null && _settings.ShortcutNewAngle.MatchesKeyDown())
+            {
+                _activeMeasurement = CreateMeasurement(MeasurementKind.Angle);
+                SetMeasurementMode(true);
+                return;
+            }
+
+            if (_settings.ShortcutEditEndpoints != null && _settings.ShortcutEditEndpoints.MatchesKeyDown())
+            {
+                SetEndpointEditMode(!_endpointEditMode);
+                return;
+            }
+
+            if (_settings.ShortcutToggleLabels != null && _settings.ShortcutToggleLabels.MatchesKeyDown())
+            {
+                _settings.ShowWorldLabels = !_settings.ShowWorldLabels;
+                MarkSettingsDirty(true);
+                return;
+            }
+
+            if (_settings.ShortcutDeleteSelected != null && _settings.ShortcutDeleteSelected.MatchesKeyDown())
+            {
+                if (_selectedMeasurement != null) DeleteMeasurement(_selectedMeasurement);
+                else SetStatus("No measurement is selected.", 3f);
+                return;
+            }
+
+            if ((_settings.ShortcutRedoAlternate != null && _settings.ShortcutRedoAlternate.MatchesKeyDown()) ||
+                (_settings.ShortcutRedo != null && _settings.ShortcutRedo.MatchesKeyDown()))
+            {
+                RedoLastMeasurementChange();
+                return;
+            }
+
+            if (_settings.ShortcutUndo != null && _settings.ShortcutUndo.MatchesKeyDown())
             {
                 UndoLastMeasurementChange();
                 return;
             }
 
-            if (controlHeld && Input.GetKeyDown(KeyCode.C))
-            {
+            if (_settings.ShortcutCopySelected != null && _settings.ShortcutCopySelected.MatchesKeyDown())
                 CopySelectedMeasurementValue();
-            }
         }
 
-        private static bool IsSnapModifierHeld()
+        private bool IsSnapModifierHeld()
         {
-            return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            return _settings != null && _settings.ShortcutSnapModifier != null &&
+                   _settings.ShortcutSnapModifier.IsHeld();
         }
 
         private bool IsTextEntryActive()
         {
-            if (_measurementNameFieldFocused)
+            if (_measurementNameFieldFocused || _measurementNotesFieldFocused || _filterFieldFocused || _groupFieldFocused ||
+                _capturingShortcut != ShortcutAction.None)
                 return true;
 
             EventSystem eventSystem = EventSystem.current;
@@ -2292,10 +2935,12 @@ namespace TapeMeasure
 
         private bool IsPointerOverGui(Vector2 guiMouse)
         {
-            // The TapeMeasure window uses IMGUI, so test it explicitly.
-            if (_windowRect.Contains(guiMouse))
+            // The TapeMeasure window uses IMGUI, so test it explicitly. Do not
+            // reserve the old main-window rectangle while that window is
+            // temporarily hidden for measurement mode.
+            if (_windowVisible && !IsMainWindowTemporarilyHidden() && _windowRect.Contains(guiMouse))
                 return true;
-            if (_showSettings && _settingsWindowRect.Contains(guiMouse))
+            if (_windowVisible && _showSettings && _settingsWindowRect.Contains(guiMouse))
                 return true;
 
             // Stock KSP editor UI is Unity UI.  EventSystem is the supported
@@ -2310,6 +2955,32 @@ namespace TapeMeasure
             return Camera.main;
         }
 
+        private void StartMeasurementModeFromControl()
+        {
+            // Only the generic Start Measuring action uses this preference.
+            // New Distance/New Angle explicitly create a new measurement and
+            // therefore never discard the measurement they just created.
+            if (_settings != null &&
+                !_settings.RememberIncompleteMeasurementOnRestart &&
+                _activeMeasurement != null &&
+                !_activeMeasurement.IsComplete &&
+                _activeMeasurement.HasPointA)
+            {
+                CommitPendingTextEdits();
+                PushMeasurementUndo("Restart incomplete measurement");
+
+                MeasurementKind kind = _activeMeasurement.Kind;
+                string oldName = _activeMeasurement.Name;
+                _measurements.Remove(_activeMeasurement);
+                _activeMeasurement = CreateMeasurement(kind, false);
+                MarkPersistenceDirty(true);
+
+                SetStatus(oldName + " was restarted from a fresh first point.", 5f);
+            }
+
+            SetMeasurementMode(true);
+        }
+
         private void SetMeasurementMode(bool enabled)
         {
             bool changed = _measurementMode != enabled;
@@ -2318,6 +2989,14 @@ namespace TapeMeasure
             {
                 _endpointEditMode = false;
                 _dragEndpoint = MeasurementEndpoint.None;
+
+                // Measurement mode owns the editor interaction.  Close Settings
+                // so it cannot cover the vessel or capture the Escape key while
+                // a point is being placed. Settings always starts closed anyway.
+                _showSettings = false;
+
+                if (changed)
+                    _measurementBlinkStartRealtime = Time.realtimeSinceStartup;
             }
             UpdateEditorSoftLock();
             UpdateToolbarModeIcon();
@@ -2362,44 +3041,50 @@ namespace TapeMeasure
 
         private void LoadMeasurementCursor()
         {
+            _measurementCursorTexture = LoadCursorTexture("cursor_measure.png", "TapeMeasure.MeasureCursor");
+            _measurementSnapCursorTexture = LoadCursorTexture("cursor_measure_snap.png", "TapeMeasure.MeasureSnapCursor");
+        }
+
+        private Texture2D LoadCursorTexture(string fileName, string textureName)
+        {
             try
             {
-                // This texture is drawn by TapeMeasure itself instead of being
+                // These textures are drawn by TapeMeasure itself instead of being
                 // installed as the OS/KSP cursor. That avoids the stock editor
-                // changing the hardware cursor underneath us and eliminates
-                // the visible cursor flicker.
+                // changing the hardware cursor underneath us and eliminates flicker.
                 string path = Path.Combine(
                     KSPUtil.ApplicationRootPath,
                     "GameData",
                     "TapeMeasure",
                     "Textures",
-                    "cursor_measure.png");
+                    fileName);
 
                 if (!File.Exists(path))
                 {
                     Debug.LogWarning(LogPrefix + "Measurement cursor texture not found: " + path);
-                    return;
+                    return null;
                 }
 
                 byte[] bytes = File.ReadAllBytes(path);
                 Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                texture.name = "TapeMeasure.MeasureCursor";
+                texture.name = textureName;
                 texture.wrapMode = TextureWrapMode.Clamp;
                 texture.filterMode = FilterMode.Bilinear;
 
                 if (!texture.LoadImage(bytes))
                 {
                     Destroy(texture);
-                    Debug.LogWarning(LogPrefix + "Unable to decode measurement cursor PNG.");
-                    return;
+                    Debug.LogWarning(LogPrefix + "Unable to decode measurement cursor PNG: " + fileName);
+                    return null;
                 }
 
-                _measurementCursorTexture = texture;
-                Debug.Log(LogPrefix + "Loaded measurement cursor overlay.");
+                Debug.Log(LogPrefix + "Loaded measurement cursor overlay: " + fileName);
+                return texture;
             }
             catch (Exception ex)
             {
-                Debug.LogError(LogPrefix + "Failed to load measurement cursor: " + ex);
+                Debug.LogError(LogPrefix + "Failed to load measurement cursor " + fileName + ": " + ex);
+                return null;
             }
         }
 
@@ -2418,13 +3103,21 @@ namespace TapeMeasure
             Cursor.visible = !shouldShow;
         }
 
+        private bool IsMainWindowTemporarilyHidden()
+        {
+            return _windowVisible &&
+                _measurementMode &&
+                _settings != null &&
+                _settings.HideWindowWhileMeasuring;
+        }
+
         private bool IsPointerOverTapeMeasureWindow()
         {
             Vector2 guiMouse = new Vector2(
                 Input.mousePosition.x,
                 Screen.height - Input.mousePosition.y);
 
-            if (_windowVisible && _windowRect.Contains(guiMouse))
+            if (_windowVisible && !IsMainWindowTemporarilyHidden() && _windowRect.Contains(guiMouse))
                 return true;
 
             return _windowVisible && _showSettings &&
@@ -2438,6 +3131,12 @@ namespace TapeMeasure
                 IsPointerOverTapeMeasureWindow())
                 return;
 
+            bool snappingActive = _settings != null &&
+                (_settings.SnappingEnabled || IsSnapModifierHeld());
+            Texture2D cursorTexture = snappingActive && _measurementSnapCursorTexture != null
+                ? _measurementSnapCursorTexture
+                : _measurementCursorTexture;
+
             Vector2 mouse = Event.current != null
                 ? Event.current.mousePosition
                 : new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
@@ -2445,15 +3144,29 @@ namespace TapeMeasure
             // The pencil tip in the supplied artwork is near the lower-left
             // corner; keep that point aligned with the actual click location.
             const float hotspotX = 4f;
-            float hotspotY = Mathf.Max(0f, _measurementCursorTexture.height - 4f);
+            float hotspotY = Mathf.Max(0f, cursorTexture.height - 4f);
             Rect cursorRect = new Rect(
                 mouse.x - hotspotX,
                 mouse.y - hotspotY,
-                _measurementCursorTexture.width,
-                _measurementCursorTexture.height);
+                cursorTexture.width,
+                cursorTexture.height);
 
             GUI.depth = -10000;
-            GUI.DrawTexture(cursorRect, _measurementCursorTexture, ScaleMode.StretchToFill, true);
+            GUI.DrawTexture(cursorRect, cursorTexture, ScaleMode.StretchToFill, true);
+
+            string axisName = GetActiveAxisConstraintName();
+            if (!string.IsNullOrEmpty(axisName))
+            {
+                GUIStyle axisStyle = new GUIStyle(GUI.skin.box);
+                axisStyle.fontStyle = FontStyle.Bold;
+                axisStyle.alignment = TextAnchor.MiddleCenter;
+                axisStyle.normal.textColor = Color.white;
+                axisStyle.hover.textColor = Color.white;
+                axisStyle.active.textColor = Color.white;
+                axisStyle.focused.textColor = Color.white;
+                Rect axisRect = new Rect(cursorRect.xMax - 17f, cursorRect.yMin + 1f, 16f, 16f);
+                GUI.Box(axisRect, axisName, axisStyle);
+            }
         }
 
         private void ResetMeasurementCursor()
@@ -2470,6 +3183,11 @@ namespace TapeMeasure
             {
                 Destroy(_measurementCursorTexture);
                 _measurementCursorTexture = null;
+            }
+            if (_measurementSnapCursorTexture != null)
+            {
+                Destroy(_measurementSnapCursorTexture);
+                _measurementSnapCursorTexture = null;
             }
         }
 
@@ -2545,6 +3263,7 @@ namespace TapeMeasure
                 _tableHeaderStyle = null;
                 _selectedNameStyle = null;
                 _worldLabelStyle = null;
+                _guideLabelStyle = null;
                 _valueButtonStyle = null;
                 _deleteButtonStyle = null;
             }
@@ -2553,6 +3272,7 @@ namespace TapeMeasure
             if (_tableHeaderStyle == null) { _tableHeaderStyle = new GUIStyle(GUI.skin.label); _tableHeaderStyle.fontStyle = FontStyle.Bold; _tableHeaderStyle.alignment = TextAnchor.MiddleCenter; }
             if (_selectedNameStyle == null) { _selectedNameStyle = new GUIStyle(GUI.skin.button); _selectedNameStyle.fontStyle = FontStyle.Bold; }
             if (_worldLabelStyle == null) { _worldLabelStyle = new GUIStyle(GUI.skin.box); _worldLabelStyle.fontStyle = FontStyle.Bold; _worldLabelStyle.alignment = TextAnchor.MiddleCenter; _worldLabelStyle.padding = new RectOffset(8, 8, 5, 5); }
+            if (_guideLabelStyle == null) { _guideLabelStyle = new GUIStyle(GUI.skin.box); _guideLabelStyle.fontStyle = FontStyle.Bold; _guideLabelStyle.alignment = TextAnchor.MiddleCenter; _guideLabelStyle.padding = new RectOffset(5, 5, 2, 2); }
             if (_valueButtonStyle == null)
             {
                 _valueButtonStyle = new GUIStyle(GUI.skin.label);
@@ -2590,34 +3310,56 @@ namespace TapeMeasure
             return m.Kind == MeasurementKind.Angle ? FormatAngle(m.AngleDegrees) : FormatDistance(m.Distance);
         }
 
-        private static string FormatAngle(float degrees) { return degrees.ToString("F2") + "\u00B0"; }
+        private string FormatAngle(float degrees)
+        {
+            int decimals = GetFixedPrecision();
+            return degrees.ToString(decimals < 0 ? "F2" : "F" + decimals.ToString(CultureInfo.InvariantCulture),
+                CultureInfo.InvariantCulture) + "\u00B0";
+        }
+
+        private int GetFixedPrecision()
+        {
+            if (_settings == null || _settings.DisplayPrecision == DisplayPrecisionMode.Automatic)
+                return -1;
+            return Mathf.Clamp((int)_settings.DisplayPrecision, 1, 4);
+        }
 
         private string FormatDistance(float meters)
         {
             DistanceUnitMode units = _settings != null
                 ? _settings.DistanceUnits
                 : DistanceUnitMode.Auto;
+            int decimals = GetFixedPrecision();
 
             switch (units)
             {
                 case DistanceUnitMode.Meters:
-                    return meters.ToString("0.###") + " m";
+                    return FormatDistanceNumber(meters, decimals, "0.###") + " m";
 
                 case DistanceUnitMode.Centimeters:
-                    return (meters * 100f).ToString("0.##") + " cm";
+                    return FormatDistanceNumber(meters * 100f, decimals, "0.##") + " cm";
 
                 case DistanceUnitMode.Millimeters:
-                    return (meters * 1000f).ToString("0.#") + " mm";
+                    return FormatDistanceNumber(meters * 1000f, decimals, "0.#") + " mm";
 
                 case DistanceUnitMode.FeetInches:
-                    return FormatFeetInches(meters);
+                    return decimals < 0 ? FormatFeetInches(meters) : FormatFeetInches(meters, decimals);
 
                 default:
-                    if (meters < 1f) return (meters * 100f).ToString("F1") + " cm";
-                    if (meters < 10f) return meters.ToString("F3") + " m";
-                    if (meters < 100f) return meters.ToString("F2") + " m";
-                    return meters.ToString("F1") + " m";
+                    if (meters < 1f)
+                        return FormatDistanceNumber(meters * 100f, decimals, "F1") + " cm";
+                    if (meters < 10f)
+                        return FormatDistanceNumber(meters, decimals, "F3") + " m";
+                    if (meters < 100f)
+                        return FormatDistanceNumber(meters, decimals, "F2") + " m";
+                    return FormatDistanceNumber(meters, decimals, "F1") + " m";
             }
+        }
+
+        private static string FormatDistanceNumber(float value, int decimals, string automaticFormat)
+        {
+            string format = decimals < 0 ? automaticFormat : "F" + decimals.ToString(CultureInfo.InvariantCulture);
+            return value.ToString(format, CultureInfo.InvariantCulture);
         }
 
         private static string FormatFeetInches(float meters)

@@ -16,6 +16,7 @@ namespace TapeMeasure
         CenterOfMass,
         CenterOfLift,
         CenterOfThrust,
+        MeasurementPoint,
         VesselAxis,
         VesselGrid
     }
@@ -67,6 +68,8 @@ namespace TapeMeasure
             TapeMeasureSettings settings,
             bool hasAxisAnchor,
             Vector3 axisAnchorWorld,
+            IList<MeasurementRecord> measurements,
+            string excludeMeasurementId,
             out SnapResult result)
         {
             result = new SnapResult();
@@ -97,6 +100,18 @@ namespace TapeMeasure
                         EvaluatePoint(partCenter, hoveredPart, null,
                             SnapTargetKind.PartCenter, "Part center", camera, mouse, ref best, ref result);
                 }
+            }
+
+            if (settings.SnapMeasurementPoints && measurements != null)
+            {
+                EvaluateMeasurementPoints(
+                    measurements,
+                    excludeMeasurementId,
+                    root,
+                    camera,
+                    mouse,
+                    ref best,
+                    ref result);
             }
 
             if (root != null)
@@ -161,6 +176,69 @@ namespace TapeMeasure
             _cachedShip = null;
             _nextCenterRefresh = 0f;
             _hasCoM = _hasCoL = _hasCoT = false;
+        }
+
+        private static void EvaluateMeasurementPoints(
+            IList<MeasurementRecord> measurements,
+            string excludeMeasurementId,
+            Part rootPart,
+            Camera camera,
+            Vector2 mouse,
+            ref float best,
+            ref SnapResult result)
+        {
+            for (int i = 0; i < measurements.Count; ++i)
+            {
+                MeasurementRecord measurement = measurements[i];
+                if (measurement == null || !measurement.Visible)
+                    continue;
+                if (!string.IsNullOrEmpty(excludeMeasurementId) &&
+                    string.Equals(measurement.Id, excludeMeasurementId, StringComparison.Ordinal))
+                    continue;
+
+                EvaluateMeasurementPoint(
+                    measurement, measurement.PointA, "A", rootPart, camera, mouse, ref best, ref result);
+                EvaluateMeasurementPoint(
+                    measurement, measurement.PointB, "B", rootPart, camera, mouse, ref best, ref result);
+                if (measurement.Kind == MeasurementKind.Angle)
+                {
+                    EvaluateMeasurementPoint(
+                        measurement, measurement.PointC, "C", rootPart, camera, mouse, ref best, ref result);
+                }
+            }
+        }
+
+        private static void EvaluateMeasurementPoint(
+            MeasurementRecord measurement,
+            MeasurementPoint point,
+            string endpointName,
+            Part rootPart,
+            Camera camera,
+            Vector2 mouse,
+            ref float best,
+            ref SnapResult result)
+        {
+            if (measurement == null || point == null || !point.IsValid(measurement.LockMode))
+                return;
+
+            Part referencePart = point.Part ?? rootPart;
+            if (referencePart == null)
+                return;
+
+            string nodeId = measurement.LockMode == MeasurementLockMode.PartRelative
+                ? point.SnapNodeId
+                : null;
+
+            EvaluatePoint(
+                measurement.GetWorldPosition(point),
+                referencePart,
+                nodeId,
+                SnapTargetKind.MeasurementPoint,
+                "Measurement point " + measurement.Name + " " + endpointName,
+                camera,
+                mouse,
+                ref best,
+                ref result);
         }
 
         private static Part GetRootPart(ShipConstruct ship)

@@ -5,24 +5,37 @@ using UnityEngine;
 namespace TapeMeasure
 {
     /// <summary>
-    /// In-memory, measurement-only undo history. It deliberately snapshots only
-    /// TapeMeasure data, never KSP editor state, so Ctrl+Z/Button Undo cannot
-    /// modify parts or interfere with KSP's own editor undo records.
+    /// In-memory, measurement-only undo/redo history. It snapshots only
+    /// TapeMeasure data, never KSP editor state, so Undo/Redo cannot modify
+    /// vessel parts or interfere with KSP's own editor history.
     /// </summary>
     internal sealed class MeasurementUndoStack
     {
         private const int MaximumEntries = 50;
-        private readonly List<MeasurementUndoEntry> _entries = new List<MeasurementUndoEntry>();
+        private readonly List<MeasurementUndoEntry> _undoEntries = new List<MeasurementUndoEntry>();
+        private readonly List<MeasurementUndoEntry> _redoEntries = new List<MeasurementUndoEntry>();
 
-        public int Count { get { return _entries.Count; } }
-        public bool CanUndo { get { return _entries.Count > 0; } }
+        public int Count { get { return _undoEntries.Count; } }
+        public int RedoCount { get { return _redoEntries.Count; } }
+        public bool CanUndo { get { return _undoEntries.Count > 0; } }
+        public bool CanRedo { get { return _redoEntries.Count > 0; } }
 
         public string NextDescription
         {
             get
             {
-                return _entries.Count > 0
-                    ? _entries[_entries.Count - 1].Description
+                return _undoEntries.Count > 0
+                    ? _undoEntries[_undoEntries.Count - 1].Description
+                    : string.Empty;
+            }
+        }
+
+        public string NextRedoDescription
+        {
+            get
+            {
+                return _redoEntries.Count > 0
+                    ? _redoEntries[_redoEntries.Count - 1].Description
                     : string.Empty;
             }
         }
@@ -36,35 +49,69 @@ namespace TapeMeasure
                 selectedMeasurement != null ? selectedMeasurement.Id : null);
         }
 
+        /// <summary>
+        /// Records a new user operation. Any new operation invalidates redo.
+        /// </summary>
         public void Push(MeasurementUndoState state, string description)
         {
             if (state == null) return;
-
-            if (_entries.Count >= MaximumEntries)
-                _entries.RemoveAt(0);
-
-            _entries.Add(new MeasurementUndoEntry(
+            AddBounded(_undoEntries, new MeasurementUndoEntry(
                 state,
                 string.IsNullOrEmpty(description) ? "measurement change" : description));
+            _redoEntries.Clear();
         }
 
-        public bool TryPop(out MeasurementUndoEntry entry)
+        public bool TryUndo(
+            MeasurementUndoState currentState,
+            out MeasurementUndoEntry entry)
         {
-            if (_entries.Count == 0)
+            if (_undoEntries.Count == 0)
             {
                 entry = null;
                 return false;
             }
 
-            int index = _entries.Count - 1;
-            entry = _entries[index];
-            _entries.RemoveAt(index);
+            int index = _undoEntries.Count - 1;
+            entry = _undoEntries[index];
+            _undoEntries.RemoveAt(index);
+
+            if (currentState != null)
+                AddBounded(_redoEntries, new MeasurementUndoEntry(currentState, entry.Description));
+            return true;
+        }
+
+        public bool TryRedo(
+            MeasurementUndoState currentState,
+            out MeasurementUndoEntry entry)
+        {
+            if (_redoEntries.Count == 0)
+            {
+                entry = null;
+                return false;
+            }
+
+            int index = _redoEntries.Count - 1;
+            entry = _redoEntries[index];
+            _redoEntries.RemoveAt(index);
+
+            if (currentState != null)
+                AddBounded(_undoEntries, new MeasurementUndoEntry(currentState, entry.Description));
             return true;
         }
 
         public void Clear()
         {
-            _entries.Clear();
+            _undoEntries.Clear();
+            _redoEntries.Clear();
+        }
+
+        private static void AddBounded(
+            List<MeasurementUndoEntry> entries,
+            MeasurementUndoEntry entry)
+        {
+            if (entries.Count >= MaximumEntries)
+                entries.RemoveAt(0);
+            entries.Add(entry);
         }
     }
 
@@ -135,6 +182,10 @@ namespace TapeMeasure
         private string _name;
         private MeasurementKind _kind;
         private MeasurementLockMode _lockMode;
+        private bool _visible;
+        private string _group;
+        private Color _displayColor;
+        private string _notes;
         private MeasurementPointState _pointA;
         private MeasurementPointState _pointB;
         private MeasurementPointState _pointC;
@@ -146,6 +197,10 @@ namespace TapeMeasure
             state._name = measurement.Name;
             state._kind = measurement.Kind;
             state._lockMode = measurement.LockMode;
+            state._visible = measurement.Visible;
+            state._group = measurement.Group;
+            state._displayColor = measurement.DisplayColor;
+            state._notes = measurement.Notes;
             state._pointA = MeasurementPointState.Capture(measurement.PointA);
             state._pointB = MeasurementPointState.Capture(measurement.PointB);
             state._pointC = MeasurementPointState.Capture(measurement.PointC);
@@ -165,7 +220,11 @@ namespace TapeMeasure
                 _lockMode,
                 a,
                 b,
-                c);
+                c,
+                _visible,
+                _group,
+                _displayColor,
+                _notes);
         }
 
         private static MeasurementPoint RestorePoint(

@@ -56,7 +56,9 @@
     <Compile Include="MeasurementRecord.cs" />
     <Compile Include="MeasurementRenderer.cs" />
     <Compile Include="MeasurementUndo.cs" />
+    <Compile Include="KeyboardShortcut.cs" />
     <Compile Include="TapeMeasure.cs" />
+    <Compile Include="TapeMeasureEnhanced.cs" />
     <Compile Include="TapeMeasureSettings.cs" />
     <Compile Include="VesselDimensions.cs" />
   </ItemGroup>
@@ -73,7 +75,7 @@
     <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\Plugins" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\Plugins" />
     <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\Textures" />
-    <Copy SourceFiles="$(SolutionDir)GameData\TapeMeasure\Textures\icon_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\cursor_measure.png" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\Textures" />
+    <Copy SourceFiles="$(SolutionDir)GameData\TapeMeasure\Textures\icon_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_38.png;$(SolutionDir)GameData\TapeMeasure\Textures\icon_measure_24.png;$(SolutionDir)GameData\TapeMeasure\Textures\cursor_measure.png;$(SolutionDir)GameData\TapeMeasure\Textures\cursor_measure_snap.png" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\Textures" />
     <Copy SourceFiles="$(SolutionDir)TapeMeasure.version" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure" />
     <MakeDir Directories="$(KSPDIR)\GameData\TapeMeasure\PluginData\DeltaVTables" />
     <Copy SourceFiles="@(DeltaVTableFile)" DestinationFolder="$(KSPDIR)\GameData\TapeMeasure\PluginData\DeltaVTables" SkipUnchangedFiles="true" />
